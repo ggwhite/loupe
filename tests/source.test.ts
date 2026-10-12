@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { resetSourceCache, resolveFile, resolveToolImage, toolImages } from '../hooks/source'
+import { resolveFile, resolveToolImage } from '../hooks/register'
+import { resetSourceCache, toolImages } from '../hooks/source'
 import { io, pngB64 } from './fixtures'
 
 describe('toolImages', () => {
@@ -50,6 +51,16 @@ describe('resolveFile', () => {
     fail()
     expect(await resolveFile($, '/c.heic')).toEqual({ error: '轉檔失敗: /c.heic' })
   })
+  test('a failed conversion is tried again on the next call', async () => {
+    resetSourceCache()
+    const { $, runs, fail } = io({ '/d.heic': {} })
+    fail()
+    expect(await resolveFile($, '/d.heic')).toEqual({ error: '轉檔失敗: /d.heic' })
+    fail(false)
+    const r = await resolveFile($, '/d.heic')
+    expect('path' in r).toBe(true)
+    expect(runs.length).toBe(2)
+  })
   test('png over the read cap still draws with null size', async () => {
     resetSourceCache()
     const { $ } = io({ '/big.png': { b64: pngB64(10, 10), tooBig: true, mtime: 3 } })
@@ -74,6 +85,16 @@ describe('resolveToolImage', () => {
     const { $, runs } = io({})
     const r = await resolveToolImage($, 'k', { base64: 'AAAA', mime: 'image/jpeg' })
     expect('path' in r && r.path.endsWith('.png')).toBe(true)
+    expect(runs.length).toBe(2)
+  })
+  test('a failed write is tried again on the next call', async () => {
+    resetSourceCache()
+    const { $, runs, fail } = io({})
+    const img = { base64: pngB64(2, 2), mime: 'image/png' }
+    fail()
+    expect(await resolveToolImage($, 'toolu_2-0', img)).toEqual({ error: '圖片寫入失敗' })
+    fail(false)
+    expect('path' in (await resolveToolImage($, 'toolu_2-0', img))).toBe(true)
     expect(runs.length).toBe(2)
   })
   test('key is sanitized', async () => {
