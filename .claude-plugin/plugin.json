@@ -1,0 +1,7 @@
+{
+  "name": "gallery",
+  "version": "0.1.0",
+  "description": "Inline image thumbnails in the transcript and an in-session gallery viewer.",
+  "types": "./types/index.d.ts",
+  "author": { "name": "white" }
+}
