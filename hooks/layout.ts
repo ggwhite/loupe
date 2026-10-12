@@ -17,8 +17,13 @@ export function parseImageRefs(text: string, home: string): string[] {
   const out: string[] = []
   for (const m of text.matchAll(MD_IMAGE)) {
     let path = m[1] ?? m[2] ?? ''
-    if (path.startsWith('file://')) path = decodeURI(path.slice('file://'.length))
-    else if (path.startsWith('~/')) path = home + path.slice(1)
+    if (path.startsWith('file://')) {
+      try {
+        path = decodeURI(path.slice('file://'.length))
+      } catch {
+        continue
+      }
+    } else if (path.startsWith('~/')) path = home + path.slice(1)
     if (!path.startsWith('/') || !isImagePath(path) || out.includes(path)) continue
     out.push(path)
   }

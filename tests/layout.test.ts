@@ -44,6 +44,15 @@ describe('fitCells', () => {
   })
 })
 
+describe('robustness', () => {
+  test('malformed percent escape skips the ref instead of throwing', async () => {
+    expect(parseImageRefs('![x](file:///y/100%.png) ![y](/ok.png)', '/h')).toEqual(['/ok.png'])
+  })
+  test('zero-sized png falls back to the default shape', async () => {
+    expect(fitCells({ width: 0, height: 0 }, 40, 8, 6)).toEqual(fitCells(FALLBACK, 40, 8, 6))
+  })
+})
+
 describe('isImagePath', () => {
   test('extensions', async () => {
     expect(['/a.PNG', '/a.jpeg', '/a.heic', '/a.gif'].every(isImagePath)).toBe(true)

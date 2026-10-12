@@ -1,3 +1,5 @@
+import type { EngineInterface } from 'claude-code'
+
 export function pngB64(w: number, h: number): string {
   const b = new Uint8Array(33)
   b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52])
@@ -5,4 +7,46 @@ export function pngB64(w: number, h: number): string {
   v.setUint32(16, w)
   v.setUint32(20, h)
   return btoa(String.fromCharCode(...b))
+}
+
+type File = { b64?: string; mtime?: number; size?: number; tooBig?: boolean }
+
+/**
+ * A stand-in `$` over a fake file map. The engine refuses fs, process and env
+ * calls from a module whose registered hooks do not call them, so a helper
+ * under test cannot take the engine's own `$` until a hook uses it.
+ */
+export function io(files: Record<string, File>) {
+  const runs: { argv: string[]; stdin?: string }[] = []
+  let exitCode = 0
+  const env: Record<string, string> = { HOME: '/Users/u', TMPDIR: '/tmp/t/' }
+  const $ = {
+    env: { get: async (name: string) => env[name] },
+    fs: {
+      stat: async (path: string) => {
+        const f = files[path]
+        if (!f) throw new Error('ENOENT')
+        return { kind: 'file' as const, size: f.size ?? 100, mtimeMs: f.mtime ?? 1, isLink: false }
+      },
+      exists: async (path: string) => path in files,
+      read: async (path: string) => {
+        const f = files[path] ?? (path.startsWith('/tmp/t/claude-gallery/') ? { b64: pngB64(800, 600) } : undefined)
+        if (!f?.b64 || f.tooBig) throw new Error('too big or missing')
+        return { base64: f.b64 }
+      },
+    },
+    process: {
+      run: async (argv: readonly string[], init?: { stdin?: string }) => {
+        runs.push({ argv: [...argv], stdin: init?.stdin })
+        return { exitCode, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
+      },
+    },
+  } as unknown as EngineInterface
+  return {
+    $,
+    runs,
+    fail: () => {
+      exitCode = 1
+    },
+  }
 }
