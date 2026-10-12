@@ -87,8 +87,10 @@ function basename(path: string): string {
 
 export async function openViewer($: EngineInterface, index: number): Promise<boolean> {
   try {
+    // Opened before any await, so it counts as answering the press and is placed at any width.
+    const opened = $.ui.open({ id: PANE_ID, title: '圖片檢視', focus: true, closeOnEscape: true, rows: 30 })
     await update($, viewer, () => ({ index }))
-    await $.ui.open({ id: PANE_ID, title: '圖片檢視', focus: true, closeOnEscape: true, rows: 30 })
+    await opened
     return true
   } catch {
     return false
