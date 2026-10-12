@@ -58,7 +58,7 @@ export async function resolveFile($: EngineInterface, path: string): Promise<Res
   if (stat === null || stat.kind !== 'file') return { error: `找不到圖片: ${path}` }
   const generation = Math.floor(stat.mtimeMs)
   const key = `file|${path}|${generation}|${stat.size}`
-  return cached(key) ?? remember(key, toPng($, path, generation))
+  return cached(key) ?? remember(key, toPng($, path, generation), true)
 }
 
 export async function resolveToolImage($: EngineInterface, key: string, image: ToolImage): Promise<Resolved> {
@@ -71,10 +71,11 @@ export async function resolveToolImage($: EngineInterface, key: string, image: T
     (async (): Promise<Resolved> => {
       const dir = await cacheDir($)
       const ext = (image.mime.split('/')[1] ?? 'png').replace('jpeg', 'jpg')
-      const raw = `${dir}/${name}.${ext}`
+      const size = ext === 'png' ? pngSize(image.base64) : null
+      const raw = `${dir}/${name}.${ext === 'png' && size === null ? 'img' : ext}`
       const ok = await run($, ['/bin/sh', '-c', 'mkdir -p "$1" && /usr/bin/base64 -D > "$2"', 'sh', dir, raw], image.base64)
       if (!ok) return { error: '圖片寫入失敗' }
-      if (ext === 'png') return { path: raw, size: pngSize(image.base64), generation: 0 }
+      if (size !== null) return { path: raw, size, generation: 0 }
       return toPng($, raw, 0)
     })(),
   )
@@ -84,14 +85,21 @@ function basename(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1)
 }
 
-export async function openViewer($: EngineInterface, index: number): Promise<void> {
-  await update($, viewer, () => ({ index }))
-  await $.ui.open({ id: PANE_ID, title: '圖片檢視', focus: true, closeOnEscape: true, rows: 30 })
+export async function openViewer($: EngineInterface, index: number): Promise<boolean> {
+  try {
+    await update($, viewer, () => ({ index }))
+    await $.ui.open({ id: PANE_ID, title: '圖片檢視', focus: true, closeOnEscape: true, rows: 30 })
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function step($: EngineInterface, delta: -1 | 1): Promise<void> {
   const last = items().length - 1
-  await update($, viewer, v => ({ index: Math.max(0, Math.min(last, v.index + delta)) }))
+  try {
+    await update($, viewer, v => ({ index: Math.max(0, Math.min(last, v.index + delta)) }))
+  } catch {}
 }
 
 function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderElement) {
@@ -151,14 +159,14 @@ function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderEl
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     try {
-      await $.command.register({ name: 'gallery', description: '開啟圖片檢視區，從最新一張開始' })
+      await $.command.register({ name: 'gallery', description: '開啟圖片檢視區，從最新一張開始', immediate: true })
     } catch {}
     return next(e)
   })
 
   on('command.run', { command: 'gallery' }, async $ => {
     const count = items().length
-    await openViewer($, Math.max(0, count - 1))
+    if (!(await openViewer($, Math.max(0, count - 1)))) return { text: '[無法開啟檢視區]' }
     return { text: count === 0 ? '還沒有圖片' : `圖片檢視：${count} 張` }
   })
 
@@ -167,7 +175,7 @@ export const register: Register = on => {
     const { Box, Button, Image, Text } = $.ui.resolve(e)
     const list = items()
     if (list.length === 0) return <Text dimColor>還沒有圖片</Text>
-    const { index } = await read($, viewer)
+    const { index } = await read($, viewer).catch(() => ({ index: list.length - 1 }))
     const i = Math.max(0, Math.min(list.length - 1, index))
     const item = list[i] as Item
     const alive = await $.fs.exists(item.path).catch(() => false)
@@ -199,6 +207,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     if (e.surface !== 'terminal') return next(e)
+    if (!e.props.text.includes('![')) return next(e)
     const home = (await $.env.get('HOME').catch(() => undefined)) ?? ''
     const refs = parseImageRefs(e.props.text, home).slice(0, MAX_PER_MESSAGE)
     if (refs.length === 0) return next(e)

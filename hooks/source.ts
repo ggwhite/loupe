@@ -13,12 +13,14 @@ export function cached(key: string): Promise<Resolved> | undefined {
   return cache.get(key)
 }
 
-/** Keeps a resolution for reuse unless it settles as an error, so the next draw tries again. */
-export function remember(key: string, work: Promise<Resolved>): Promise<Resolved> {
+/** Keeps a resolution for reuse; an error is dropped unless keepErrors, so the next draw tries again. */
+export function remember(key: string, work: Promise<Resolved>, keepErrors = false): Promise<Resolved> {
   cache.set(key, work)
-  void work.then(r => {
-    if ('error' in r && cache.get(key) === work) cache.delete(key)
-  })
+  if (!keepErrors) {
+    void work.then(r => {
+      if ('error' in r && cache.get(key) === work) cache.delete(key)
+    })
+  }
   return work
 }
 

@@ -51,15 +51,14 @@ describe('resolveFile', () => {
     fail()
     expect(await resolveFile($, '/c.heic')).toEqual({ error: '轉檔失敗: /c.heic' })
   })
-  test('a failed conversion is tried again on the next call', async () => {
+  test('a failed conversion of an unchanged file is not tried again', async () => {
     resetSourceCache()
     const { $, runs, fail } = io({ '/d.heic': {} })
     fail()
     expect(await resolveFile($, '/d.heic')).toEqual({ error: '轉檔失敗: /d.heic' })
     fail(false)
-    const r = await resolveFile($, '/d.heic')
-    expect('path' in r).toBe(true)
-    expect(runs.length).toBe(2)
+    expect(await resolveFile($, '/d.heic')).toEqual({ error: '轉檔失敗: /d.heic' })
+    expect(runs.length).toBe(1)
   })
   test('png over the read cap still draws with null size', async () => {
     resetSourceCache()

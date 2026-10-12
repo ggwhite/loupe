@@ -370,4 +370,60 @@ describe('viewer pane', () => {
     const hotkeys = findAll(tree, 'Button').map(b => b.props?.['hotkey'])
     expect(hotkeys).toEqual(expect.arrayContaining(['h', 'l']))
   })
+
+  test('a ui.open that throws neither breaks the zoom button nor /gallery', async ($, on) => {
+    intercept(on, files())
+    on('ui.open', async () => {
+      throw new Error('denied')
+    })
+    on('command.run', async () => ({}))
+    await start($)
+    await three($)
+    await zoom($, 2)
+    const result = await $.command.run({ command: 'gallery', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
+    expect(JSON.stringify(result)).toContain('[無法開啟檢視區]')
+  })
+})
+
+describe('cost of drawing', () => {
+  test('a message without an image ref makes no env lookup', async ($, on) => {
+    const gets: string[] = []
+    intercept(on, {}, null)
+    on('env.get', async (_$, e) => {
+      gets.push(e.name)
+      return { value: '/Users/u' }
+    })
+    await start($)
+    await message($, 'plain text, no pictures')
+    expect(gets).toHaveLength(0)
+    await message($, '![a](/a.png)')
+    expect(gets.length).toBeGreaterThan(0)
+  })
+
+  test('a failing conversion of an unchanged file runs sips once, and again after it changes', async ($, on) => {
+    const map: Record<string, { mtime: number }> = { '/x.heic': { mtime: 1 } }
+    const io = intercept(on, map)
+    io.fail()
+    await start($)
+    await message($, '![x](/x.heic)')
+    await message($, '![x](/x.heic)')
+    expect(io.runs).toHaveLength(1)
+    map['/x.heic'] = { mtime: 2 }
+    await message($, '![x](/x.heic)')
+    expect(io.runs).toHaveLength(2)
+  })
+
+  test('a png-labelled tool image that is not a png goes through sips', async ($, on) => {
+    const io = intercept(on, {})
+    await start($)
+    const output = [{ type: 'image', file: { base64: btoa('GIF89a-not-a-png'), type: 'image/png' } }]
+    await $.ui.render({
+      surface: 'terminal',
+      component: 'ToolResult',
+      requestId: 'r1',
+      viewport: { columns: 100, rows: 40 },
+      props: { tool: 'Read', tool_use_id: 'toolu_x', output, isErrored: false },
+    })
+    expect(io.runs.some(r => r.argv.join(' ').includes('sips'))).toBe(true)
+  })
 })
