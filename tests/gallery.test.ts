@@ -1,4 +1,4 @@
-import type { RenderElement } from 'claude-code'
+import type { On, RenderElement } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { describe, expect, test } from 'claude-code/testing'
 
@@ -239,5 +239,135 @@ describe('tool result thumbnails', () => {
       props: { tool_use_id: 'toolu_7', tool: 'Read', output: IMAGE_OUTPUT, isErrored: false },
     })) as RenderElement as Node
     expect((findAll(tree, 'Image')[0]?.props?.['source'] as { file: string } | undefined)?.file).toBe('/tmp/claude-gallery/toolu_7-0.png')
+  })
+})
+
+describe('viewer pane', () => {
+  const PANE = {
+    plugin: 'gallery',
+    surface: 'terminal' as const,
+    component: 'Pane' as const,
+    requestId: 'gallery',
+    props: { title: '圖片檢視', isFocused: true, bodyColumns: 80, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 30 }, view: {} },
+    viewport: { columns: 100, rows: 40 },
+  }
+
+  const opened = (on: On) => {
+    const ids: string[] = []
+    on('ui.open', async (_$, e) => {
+      ids.push(e.id)
+      return { value: { isPlaced: true as const } }
+    })
+    return ids
+  }
+
+  const three = async ($: Engine) => {
+    await message($, '![a](/a.png)', 'msg-1')
+    await message($, '![b](/b.png)', 'msg-2')
+    await message($, '![c](/c.png)', 'msg-3')
+  }
+
+  const files = () => ({
+    '/a.png': { b64: pngB64(100, 100) },
+    '/b.png': { b64: pngB64(1600, 1000) },
+    '/c.png': { b64: pngB64(100, 100) },
+  })
+
+  const zoom = async ($: Engine, n: number) => {
+    const ui = await $.ui.mount({
+      plugin: 'gallery',
+      surface: 'terminal',
+      component: 'AssistantMessage',
+      requestId: `msg-${n}`,
+      viewport: { columns: 100, rows: 40 },
+      props: { text: `![x](/${'abc'[n - 1]}.png)`, isFirstOfReply: true },
+    })
+    const button = (await ui.findAll({ type: 'Button' })).find(b => b.props['label'] === `#${n} 放大`)
+    expect(button?.key).toBeDefined()
+    await ui.press({ key: button?.key ?? '' })
+    await ui.unmount()
+  }
+
+  const hotkey = async ($: Engine, key: string) => {
+    const ui = await $.ui.mount(PANE)
+    const button = (await ui.findAll({ type: 'Button' })).find(b => b.props['hotkey'] === key)
+    expect(button?.key).toBeDefined()
+    await ui.press({ key: button?.key ?? '' })
+    await ui.unmount()
+  }
+
+  const pane = async ($: Engine) => {
+    const ui = await $.ui.mount(PANE)
+    const tree = (await ui.drawn()) as RenderElement as Node
+    await ui.unmount()
+    return tree
+  }
+
+  const counter = (tree: Node) => findAll(tree, 'Text').map(textOf).find(t => /\d+\/\d+/.test(t)) ?? ''
+
+  test('an empty gallery says so and draws no Image', async ($, on) => {
+    intercept(on, {})
+    await start($)
+    const tree = await pane($)
+    expect(findAll(tree, 'Image')).toHaveLength(0)
+    expect(findAll(tree, 'Text').map(textOf)).toContain('還沒有圖片')
+  })
+
+  test('#2 opens the pane on the second image, sized to the body', async ($, on) => {
+    intercept(on, files())
+    const ids = opened(on)
+    await start($)
+    await three($)
+    await zoom($, 2)
+    expect(ids).toContain('gallery')
+    const tree = await pane($)
+    expect(counter(tree)).toContain('2/3')
+    const images = findAll(tree, 'Image')
+    expect(images).toHaveLength(1)
+    expect((images[0]?.props?.['source'] as { file: string }).file).toBe('/b.png')
+    const cells = fitCells({ width: 1600, height: 1000 }, 80, 28)
+    expect(images[0]?.props?.['columns']).toBe(cells.columns)
+    expect(images[0]?.props?.['rows']).toBe(cells.rows)
+  })
+
+  test('l and h stop at the ends', async ($, on) => {
+    intercept(on, files())
+    opened(on)
+    await start($)
+    await three($)
+    await zoom($, 2)
+    await hotkey($, 'l')
+    await hotkey($, 'l')
+    expect(counter(await pane($))).toContain('3/3')
+    await hotkey($, 'h')
+    await hotkey($, 'h')
+    await hotkey($, 'h')
+    expect(counter(await pane($))).toContain('1/3')
+  })
+
+  test('/gallery opens the pane on the newest image', async ($, on) => {
+    intercept(on, files())
+    const ids = opened(on)
+    on('command.run', async () => ({}))
+    await start($)
+    await three($)
+    await $.command.run({ command: 'gallery', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
+    expect(ids).toContain('gallery')
+    expect(counter(await pane($))).toContain('3/3')
+  })
+
+  test('a file deleted since it was drawn shows a dim line and keeps h/l', async ($, on) => {
+    const map: Record<string, { b64: string }> = files()
+    intercept(on, map)
+    opened(on)
+    await start($)
+    await three($)
+    await zoom($, 2)
+    delete map['/b.png']
+    const tree = await pane($)
+    expect(findAll(tree, 'Image')).toHaveLength(0)
+    expect(findAll(tree, 'Text').map(textOf)).toContain('[檔案已刪除]')
+    const hotkeys = findAll(tree, 'Button').map(b => b.props?.['hotkey'])
+    expect(hotkeys).toEqual(expect.arrayContaining(['h', 'l']))
   })
 })
