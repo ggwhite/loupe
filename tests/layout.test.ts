@@ -26,11 +26,14 @@ describe('pngSize', () => {
 })
 
 describe('fitCells', () => {
-  test('keeps aspect within height limit', async () => {
-    expect(fitCells({ width: 3200, height: 1000 }, 40, 8, 6)).toEqual({ columns: 13, rows: 8 })
+  test('height-limited keeps aspect (cell is twice as tall as wide)', async () => {
+    expect(fitCells({ width: 1600, height: 1000 }, 40, 8, 6)).toEqual({ columns: 26, rows: 8 })
   })
-  test('wide image is width-limited and keeps aspect', async () => {
-    expect(fitCells({ width: 8000, height: 500 }, 40, 8, 6)).toEqual({ columns: 40, rows: 5 })
+  test('wide image falls back to the width limit', async () => {
+    expect(fitCells({ width: 3200, height: 1000 }, 40, 8, 6)).toEqual({ columns: 40, rows: 6 })
+  })
+  test('very wide image is width-limited down to one row', async () => {
+    expect(fitCells({ width: 8000, height: 500 }, 40, 8, 6)).toEqual({ columns: 40, rows: 1 })
   })
   test('tall image respects minColumns', async () => {
     expect(fitCells({ width: 100, height: 2000 }, 40, 8, 6)).toEqual({ columns: 6, rows: 8 })

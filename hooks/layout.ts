@@ -47,7 +47,7 @@ export function pngSize(base64: string): Size | null {
 /** The largest box of cells within the limits that keeps the picture's shape. */
 export function fitCells(size: Size | null, maxColumns: number, maxRows: number, minColumns = 1): Cells {
   const s = size && size.width > 0 && size.height > 0 ? size : FALLBACK
-  const perRow = s.width / (s.height * CELL_ASPECT)
+  const perRow = (s.width * CELL_ASPECT) / s.height
   const colCap = Math.max(1, Math.min(MAX_CELLS, maxColumns))
   const rowCap = Math.max(1, Math.min(MAX_CELLS, maxRows))
   let rows = rowCap

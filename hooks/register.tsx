@@ -1,10 +1,10 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderElement, RenderInput } from 'claude-code'
+import type { EngineInterface, Register, RenderElement, RenderInput, RenderViewport } from 'claude-code'
 
 import type { Viewer } from '../types'
 import { fitCells, parseImageRefs, pngSize } from './layout'
 import type { Size } from './layout'
-import { addItem, items } from './registry'
+import { addItem, items, resetRegistry } from './registry'
 import type { Item } from './registry'
 import { cached, hash, remember, toolImages } from './source'
 import type { Resolved, ToolImage } from './source'
@@ -14,16 +14,33 @@ const MAX_PER_MESSAGE = 8
 const THUMB_ROWS = 8
 const THUMB_MIN_COLUMNS = 6
 const THUMB_MAX_COLUMNS = 40
-const MARGIN = 4
-const GAP = 1
+const THUMB_INDENT = 2
+const THUMB_RIGHT_MARGIN = 2
+const GAP = 2
+const PANE_PAD_X = 2
+const PANE_PAD_Y = 1
+const PANE_GAP = 1
 const RUN_TIMEOUT_MS = 5000
 const TITLE_ROWS = 1
 const BUTTON_ROWS = 1
+const ROW_THUMBS = 3
+const ROW_THUMB_COLUMNS = 8
+const ROW_THUMB_ROWS = 2
+const ROW_THUMB_MIN_COLUMNS = 2
+const ROW_GAP = 1
+const SINGLE_MAX_COLUMNS = 80
+const SINGLE_MAX_ROWS = 20
+const VIEWER_MIN_ROWS = 12
+const VIEWER_ROW_MARGIN = 8
+const VIEWER_WIDTH = 0.7
+const FALLBACK_VIEWPORT = { columns: 100, rows: 40 }
+const LATEST = -1
 
 export const viewer = atom({ plugin: 'gallery', key: 'viewer' } as const, { index: 0 } as Viewer)
 
 type Found = { r: Resolved; label: string }
 type Site = RenderInput<'AssistantMessage' | 'ToolResult' | 'ToolGroup', 'terminal'>
+type Viewport = { columns: number; rows?: number }
 
 async function cacheDir($: EngineInterface): Promise<string> {
   const tmp = (await $.env.get('TMPDIR').catch(() => undefined))?.replace(/\/+$/, '') || '/tmp'
@@ -85,13 +102,17 @@ function basename(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1)
 }
 
-export async function openViewer($: EngineInterface, index: number): Promise<boolean> {
+export async function openViewer($: EngineInterface, index: number, viewport: Viewport | undefined): Promise<boolean> {
   try {
+    const columns = Math.round((viewport?.columns ?? FALLBACK_VIEWPORT.columns) * VIEWER_WIDTH)
+    const rows = Math.max(VIEWER_MIN_ROWS, (viewport?.rows ?? FALLBACK_VIEWPORT.rows) - VIEWER_ROW_MARGIN)
     // Opened before any await, so it counts as answering the press and is placed at any width.
-    const opened = $.ui.open({ id: PANE_ID, title: '圖片檢視', focus: true, closeOnEscape: true, rows: 30 })
+    const placed = $.ui.open({ id: PANE_ID, title: '圖片檢視', focus: true, closeOnEscape: true, rows, columns }).then(
+      () => true,
+      () => false,
+    )
     await update($, viewer, () => ({ index }))
-    await opened
-    return true
+    return await placed
   } catch {
     return false
   }
@@ -100,24 +121,93 @@ export async function openViewer($: EngineInterface, index: number): Promise<boo
 async function step($: EngineInterface, delta: -1 | 1): Promise<void> {
   const last = items().length - 1
   try {
-    await update($, viewer, v => ({ index: Math.max(0, Math.min(last, v.index + delta)) }))
+    await update($, viewer, v => ({ index: Math.max(0, Math.min(last, (v.index === LATEST ? last : v.index) + delta)) }))
   } catch {}
+}
+
+async function close($: EngineInterface): Promise<void> {
+  try {
+    await $.ui.close({ id: PANE_ID })
+  } catch {}
+}
+
+function collect(found: Found[]): { added: Item[]; errors: string[] } {
+  const added: Item[] = []
+  const errors: string[] = []
+  for (const { r, label } of found) {
+    if ('error' in r) errors.push(r.error)
+    else added.push(addItem(r, label))
+  }
+  return { added, errors }
+}
+
+function source(item: Item) {
+  return { file: item.path, format: 'png' as const, generation: item.generation }
+}
+
+function drawRow($: EngineInterface, e: Site, found: Found[], row: RenderElement) {
+  const { Box, Button, Image, Text } = $.ui.resolve(e)
+  const viewport: RenderViewport | undefined = e.viewport
+  const { added, errors } = collect(found)
+  const first = added[0]
+  const line = (
+    <Box flexDirection="row" alignItems="flex-end">
+      <Box flexGrow={1}>{row}</Box>
+      {first && (
+        <Box flexDirection="row" alignItems="flex-end" columnGap={ROW_GAP}>
+          {added.length > ROW_THUMBS && <Text dimColor>{`+${added.length - ROW_THUMBS}`}</Text>}
+          {added.slice(0, ROW_THUMBS).map(item => (
+            <Image
+              key={`img-${item.n}`}
+              source={source(item)}
+              {...fitCells(item.size, ROW_THUMB_COLUMNS, ROW_THUMB_ROWS, ROW_THUMB_MIN_COLUMNS)}
+              alt={`[#${item.n} ${basename(item.label)}]`}
+            />
+          ))}
+          <Box alignSelf="flex-end">
+            <Button key={`open-${first.n}`} plain dimColor onPress={() => void openViewer($, first.n - 1, viewport)}>
+              ⤢
+            </Button>
+          </Box>
+        </Box>
+      )}
+    </Box>
+  )
+  if (errors.length === 0) return line
+  return (
+    <Box flexDirection="column">
+      {line}
+      <Box flexDirection="column" paddingLeft={THUMB_INDENT}>
+        {errors.map((msg, i) => (
+          <Text key={`error-${i}`} dimColor>{`[${msg}]`}</Text>
+        ))}
+      </Box>
+    </Box>
+  )
 }
 
 function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderElement) {
   const { Box, Button, Image, Text } = $.ui.resolve(e)
-  const room = Math.max(THUMB_MIN_COLUMNS, (e.viewport?.columns ?? 80) - MARGIN)
-  const tiles: { item: Item; columns: number; rows: number }[] = []
-  const errors: string[] = []
-  for (const { r, label } of found) {
-    if ('error' in r) {
-      errors.push(r.error)
-      continue
-    }
-    const item = addItem(r, label)
-    const cells = fitCells(r.size, Math.min(THUMB_MAX_COLUMNS, room), THUMB_ROWS, THUMB_MIN_COLUMNS)
-    tiles.push({ item, ...cells })
+  const viewport: RenderViewport | undefined = e.viewport
+  const columns = viewport?.columns ?? 80
+  const room = Math.max(THUMB_MIN_COLUMNS, columns - THUMB_INDENT - THUMB_RIGHT_MARGIN)
+  const { added, errors } = collect(found)
+  const single = found.length === 1 ? added[0] : undefined
+  if (single) {
+    const cells = fitCells(single.size, Math.min(SINGLE_MAX_COLUMNS, columns - THUMB_INDENT * 2), SINGLE_MAX_ROWS, THUMB_MIN_COLUMNS)
+    return (
+      <Box flexDirection="column">
+        {below}
+        <Box flexDirection="column" alignItems="flex-start" marginTop={1} paddingLeft={THUMB_INDENT}>
+          <Image key={`img-${single.n}`} source={source(single)} {...cells} alt={`[#${single.n} ${basename(single.label)}]`} />
+          <Button key={`zoom-${single.n}`} plain dimColor onPress={() => void openViewer($, single.n - 1, viewport)}>
+            {`⤢ #${single.n}`}
+          </Button>
+        </Box>
+      </Box>
+    )
   }
+  const tiles = added.map(item => ({ item, ...fitCells(item.size, Math.min(THUMB_MAX_COLUMNS, room), THUMB_ROWS, THUMB_MIN_COLUMNS) }))
   const rows: (typeof tiles)[] = []
   let width = 0
   for (const t of tiles) {
@@ -133,19 +223,20 @@ function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderEl
   return (
     <Box flexDirection="column">
       {below}
+      <Box flexDirection="column" marginTop={1} paddingLeft={THUMB_INDENT}>
       {rows.map((row, i) => (
         <Box key={`row-${i}`} flexDirection="row" columnGap={GAP}>
           {row.map(t => (
             <Box key={`tile-${t.item.n}`} flexDirection="column" alignItems="center">
               <Image
                 key={`img-${t.item.n}`}
-                source={{ file: t.item.path, format: 'png', generation: t.item.generation }}
+                source={source(t.item)}
                 columns={t.columns}
                 rows={t.rows}
                 alt={`[#${t.item.n} ${basename(t.item.label)}]`}
               />
-              <Button key={`zoom-${t.item.n}`} plain dimColor onPress={() => void openViewer($, t.item.n - 1)}>
-                {`#${t.item.n} 放大`}
+              <Button key={`zoom-${t.item.n}`} plain dimColor onPress={() => void openViewer($, t.item.n - 1, viewport)}>
+                {`⤢ #${t.item.n}`}
               </Button>
             </Box>
           ))}
@@ -154,6 +245,7 @@ function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderEl
       {errors.map((msg, i) => (
         <Text key={`error-${i}`} dimColor>{`[${msg}]`}</Text>
       ))}
+      </Box>
     </Box>
   )
 }
@@ -166,10 +258,30 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'gallery' }, async $ => {
+  on('classic.SessionStart', async ($, e, next) => {
+    if (e.source === 'startup' || e.source === 'clear' || e.source === 'resume') {
+      resetRegistry()
+      await update($, viewer, () => ({ index: LATEST })).catch(() => undefined)
+    }
+    return next(e)
+  })
+
+  on('command.run', { command: 'gallery' }, async ($, e) => {
     const count = items().length
-    if (!(await openViewer($, Math.max(0, count - 1)))) return { text: '[無法開啟檢視區]' }
+    if (!(await openViewer($, LATEST, { columns: e.presentation.columns }))) return { text: '[無法開啟檢視區]' }
     return { text: count === 0 ? '還沒有圖片' : `圖片檢視：${count} 張` }
+  })
+
+  on('tool.call', async ($, e, next) => {
+    const r = await next(e)
+    try {
+      const images = toolImages(r.result).slice(0, MAX_PER_MESSAGE)
+      if (images.length === 0) return r
+      const input = e as { file_path?: unknown }
+      const label = typeof input.file_path === 'string' ? input.file_path : e.tool
+      collect(await Promise.all(images.map(async (img, i) => ({ r: await resolveToolImage($, `${e.tool_use_id}-${i}`, img), label }))))
+    } catch {}
+    return r
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e, next) => {
@@ -177,21 +289,26 @@ export const register: Register = on => {
     const { Box, Button, Image, Text } = $.ui.resolve(e)
     const list = items()
     if (list.length === 0) return <Text dimColor>還沒有圖片</Text>
-    const { index } = await read($, viewer).catch(() => ({ index: list.length - 1 }))
-    const i = Math.max(0, Math.min(list.length - 1, index))
+    const { index } = await read($, viewer).catch(() => ({ index: LATEST }))
+    const i = index === LATEST ? list.length - 1 : Math.max(0, Math.min(list.length - 1, index))
     const item = list[i] as Item
     const alive = await $.fs.exists(item.path).catch(() => false)
-    const cells = fitCells(item.size, e.props.bodyColumns, Math.max(1, e.props.scroll.bodyRows - TITLE_ROWS - BUTTON_ROWS))
+    const cells = fitCells(
+      item.size,
+      Math.max(1, e.props.bodyColumns - PANE_PAD_X * 2),
+      Math.max(1, e.props.scroll.bodyRows - PANE_PAD_Y * 2 - TITLE_ROWS - BUTTON_ROWS - PANE_GAP * 2),
+    )
     return (
-      <Box flexDirection="column" alignItems="center">
+      <Box flexDirection="column" alignItems="center" paddingX={PANE_PAD_X} paddingY={PANE_PAD_Y} rowGap={PANE_GAP}>
         <Text>
-          {`${i + 1}/${list.length}  `}
+          <Text bold>{`${i + 1} of ${list.length}`}</Text>
+          {'  '}
           <Text dimColor>{basename(item.label)}</Text>
         </Text>
         {alive ? (
           <Image
             key="view"
-            source={{ file: item.path, format: 'png', generation: item.generation }}
+            source={source(item)}
             columns={cells.columns}
             rows={cells.rows}
             alt={`[#${item.n} ${basename(item.label)}]`}
@@ -200,8 +317,9 @@ export const register: Register = on => {
           <Text dimColor>[檔案已刪除]</Text>
         )}
         <Box flexDirection="row" columnGap={2}>
-          <Button hotkey="h" onPress={() => void step($, -1)}>◀ 上一張</Button>
-          <Button hotkey="l" onPress={() => void step($, 1)}>下一張 ▶</Button>
+          <Button hotkey="h" onPress={() => void step($, -1)}>‹</Button>
+          <Button hotkey="l" onPress={() => void step($, 1)}>›</Button>
+          <Button hotkey="x" onPress={() => void close($)}>✕</Button>
         </Box>
       </Box>
     )
@@ -224,7 +342,7 @@ export const register: Register = on => {
     const found = await Promise.all(
       images.map(async (img, i) => ({ r: await resolveToolImage($, `${e.props.tool_use_id}-${i}`, img), label: `${e.props.tool} ${i + 1}` })),
     )
-    return drawThumbs($, e, found, await next(e))
+    return drawRow($, e, found, await next(e))
   })
 
   on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
@@ -239,6 +357,6 @@ export const register: Register = on => {
       })
     })
     if (jobs.length === 0) return next(e)
-    return drawThumbs($, e, await Promise.all(jobs), await next(e))
+    return drawRow($, e, await Promise.all(jobs), await next(e))
   })
 }
