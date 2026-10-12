@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { addItem, items, resetRegistry } from '../hooks/registry'
 
 describe('registry', () => {
-  test('numbers items from 1 in order and reuses one path and generation', async () => {
+  test('numbers items from 1 in order and reuses one path and generation', () => {
     resetRegistry()
     const a = addItem({ path: '/a.png', size: null, generation: 1 }, 'a')
     const b = addItem({ path: '/b.png', size: null, generation: 1 }, 'b')

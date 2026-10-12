@@ -134,8 +134,8 @@ function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderEl
           ))}
         </Box>
       ))}
-      {errors.map(msg => (
-        <Text key={msg} dimColor>{`[${msg}]`}</Text>
+      {errors.map((msg, i) => (
+        <Text key={`error-${i}`} dimColor>{`[${msg}]`}</Text>
       ))}
     </Box>
   )
@@ -144,7 +144,7 @@ function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderEl
 export const register: Register = on => {
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     if (e.surface !== 'terminal') return next(e)
-    const home = (await $.env.get('HOME')) ?? ''
+    const home = (await $.env.get('HOME').catch(() => undefined)) ?? ''
     const refs = parseImageRefs(e.props.text, home).slice(0, MAX_PER_MESSAGE)
     if (refs.length === 0) return next(e)
     const found = await Promise.all(refs.map(async path => ({ r: await resolveFile($, path), label: path })))
@@ -168,10 +168,11 @@ export const register: Register = on => {
       const input = call.input as { file_path?: unknown } | null
       const label = typeof input?.file_path === 'string' ? input.file_path : call.tool
       toolImages(call.output).forEach((img, i) => {
+        if (jobs.length >= MAX_PER_MESSAGE) return
         jobs.push(resolveToolImage($, `${call.tool_use_id ?? `${e.requestId}-${ci}`}-${i}`, img).then(r => ({ r, label })))
       })
     })
     if (jobs.length === 0) return next(e)
-    return drawThumbs($, e, await Promise.all(jobs.slice(0, MAX_PER_MESSAGE)), await next(e))
+    return drawThumbs($, e, await Promise.all(jobs), await next(e))
   })
 }

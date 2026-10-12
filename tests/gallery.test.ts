@@ -82,6 +82,7 @@ describe('AssistantMessage thumbnails', () => {
     await start($)
     await message($, '![a](/a.jpg)')
     const before = runs.length
+    expect(before).toBeGreaterThan(0)
     const tree = await message($, '![a](/a.jpg)')
     expect(findAll(tree, 'Button').map(labelOf).join(' ')).toContain('#1')
     expect(runs.length).toBe(before)
@@ -135,6 +136,34 @@ describe('AssistantMessage thumbnails', () => {
     }
   })
 
+  test('a path with spaces in angle brackets draws as is', async ($, on) => {
+    intercept(on, { '/a b/c.png': { b64: pngB64(100, 100) } })
+    await start($)
+    const images = findAll(await message($, '![x](</a b/c.png>)'), 'Image')
+    expect(images).toHaveLength(1)
+    expect((images[0]?.props?.['source'] as { file: string }).file).toBe('/a b/c.png')
+  })
+
+  test('a heic path with spaces reaches sips as one argument', async ($, on) => {
+    const { runs } = intercept(on, { '/my pics/shot 1.heic': { mtime: 2 } })
+    await start($)
+    const images = findAll(await message($, '![x](</my pics/shot 1.heic>)'), 'Image')
+    expect(images).toHaveLength(1)
+    const sips = runs.find(r => r.argv.join(' ').includes('sips'))
+    expect(sips?.argv).toContain('/my pics/shot 1.heic')
+    expect(sips?.argv[0]).toBe('/bin/sh')
+  })
+
+  test('an unreadable HOME still draws absolute paths', async ($, on) => {
+    intercept(on, { '/a.png': { b64: pngB64(100, 100) } }, null)
+    on('env.get', async (_$, e) => {
+      if (e.name === 'HOME') throw new Error('denied')
+      return { value: e.name === 'TMPDIR' ? '/tmp/t/' : undefined }
+    })
+    await start($)
+    expect(findAll(await message($, '![a](/a.png)'), 'Image')).toHaveLength(1)
+  })
+
   test('the file is statted with its links resolved', async ($, on) => {
     const { stats } = intercept(on, { '/a.png': { b64: pngB64(10, 10) } })
     await start($)
@@ -159,6 +188,21 @@ describe('tool result thumbnails', () => {
     const images = findAll(tree, 'Image')
     expect(images).toHaveLength(1)
     expect((images[0]?.props?.['source'] as { file: string }).file).toBe('/tmp/t/claude-gallery/toolu_9-0.png')
+  })
+
+  test('a tool group writes no more images than it draws', async ($, on) => {
+    const { runs } = intercept(on, {})
+    await start($)
+    const many = Array.from({ length: 10 }, () => IMAGE_OUTPUT[0])
+    const tree = (await $.ui.render({
+      surface: 'terminal',
+      component: 'ToolGroup',
+      requestId: 'group-2',
+      viewport: { columns: 100, rows: 40 },
+      props: { calls: [call('toolu_m', 'Read', {}, many)], isActive: false, isExpanded: false },
+    })) as RenderElement as Node
+    expect(findAll(tree, 'Image')).toHaveLength(8)
+    expect(runs.length).toBe(8)
   })
 
   test('a tool group draws the one call that returned an image', async ($, on) => {
