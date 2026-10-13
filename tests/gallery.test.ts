@@ -258,6 +258,46 @@ describe('tool result thumbnails', () => {
     expect(zoomBox?.props?.['alignSelf']).toBe('flex-end')
   })
 
+  test('the engine row keeps 2 columns off the right edge', async ($, on) => {
+    intercept(on, {})
+    await start($)
+    const tree = (await $.ui.render({
+      surface: 'terminal',
+      component: 'ToolResult',
+      requestId: 'toolu_p',
+      viewport: { columns: 100, rows: 40 },
+      props: { tool_use_id: 'toolu_p', tool: 'Read', output: IMAGE_OUTPUT, isErrored: false },
+    })) as RenderElement as Node
+    expect(tree.props?.['paddingRight']).toBe(2)
+  })
+
+  const EMPTY_ROWS: [string, () => unknown][] = [
+    ['empty text', () => ({ type: 'Text', props: {}, children: [''] })],
+    ['empty box', () => ({ type: 'Box', props: {}, children: [{ type: 'Text', props: {}, children: [] }] })],
+  ]
+
+  for (const [name, empty] of EMPTY_ROWS) {
+    test(`an empty engine row (${name}) left-aligns the group with the transcript indent`, async ($, on) => {
+      on('ui.render', { component: 'ToolResult' }, async () => empty() as RenderElement)
+      intercept(on, {})
+      await start($)
+      const tree = (await $.ui.render({
+        surface: 'terminal',
+        component: 'ToolResult',
+        requestId: 'toolu_e',
+        viewport: { columns: 100, rows: 40 },
+        props: { tool_use_id: 'toolu_e', tool: 'Read', output: IMAGE_OUTPUT, isErrored: false },
+      })) as RenderElement as Node
+      expect(findAll(tree, 'Box').some(b => b.props?.['flexGrow'] === 1)).toBe(false)
+      expect(tree.props?.['flexDirection']).toBe('row')
+      expect(tree.props?.['alignItems']).toBe('flex-end')
+      expect(tree.props?.['paddingLeft']).toBe(2)
+      expect(tree.props?.['columnGap']).toBe(1)
+      expect(findAll(tree, 'Image')).toHaveLength(1)
+      expect(findAll(tree, 'Button').map(labelOf)).toEqual(['⤢'])
+    })
+  }
+
   test('a tool group with one image draws the same row', async ($, on) => {
     intercept(on, {})
     await start($)
