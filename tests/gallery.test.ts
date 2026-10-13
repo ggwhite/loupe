@@ -256,7 +256,7 @@ describe('tool result thumbnails', () => {
     expect(images).toHaveLength(1)
     expect(images[0]?.props?.['rows']).toBe(2)
     expect(images[0]?.props?.['columns']).toBe(fitCells({ width: 640, height: 480 }, 8, 2, 2).columns)
-    expect(findAll(bar, 'Button').map(labelOf)).toEqual(['⤢'])
+    expect(findAll(bar, 'Button').map(labelOf)).toEqual(['⤢ '])
   })
 
   test('5 images: 3 thumbnails, +2 and ⤢ bottom-aligned in a height-2 box', async ($, on) => {
@@ -275,7 +275,7 @@ describe('tool result thumbnails', () => {
     const tail = findAll(bar, 'Box').find(b => b.props?.['height'] === 2)
     expect(tail?.props?.['justifyContent']).toBe('flex-end')
     expect(findAll(tail, 'Text').map(textOf)).toContain('+2')
-    expect(findAll(tail, 'Button').map(labelOf)).toEqual(['⤢'])
+    expect(findAll(tail, 'Button').map(labelOf)).toEqual(['⤢ '])
   })
 
   const EMPTY_ROWS: [string, () => unknown][] = [
@@ -297,7 +297,7 @@ describe('tool result thumbnails', () => {
       })) as RenderElement as Node
       expect(tree.props?.['flexDirection']).toBe('column')
       expect(findAll(strip(tree), 'Image')).toHaveLength(1)
-      expect(findAll(strip(tree), 'Button').map(labelOf)).toEqual(['⤢'])
+      expect(findAll(strip(tree), 'Button').map(labelOf)).toEqual(['⤢ '])
     })
   }
 
@@ -313,7 +313,7 @@ describe('tool result thumbnails', () => {
     })) as RenderElement as Node
     expect(tree.props?.['flexDirection']).toBe('column')
     expect(findAll(strip(tree), 'Image').map(i => i.props?.['rows'])).toEqual([2])
-    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['⤢'])
+    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['⤢ '])
   })
 
   test('a tool group draws the one call that returned an image', async ($, on) => {
@@ -519,7 +519,7 @@ describe('viewer pane', () => {
       viewport: { columns: 100, rows: 40 },
       props: { calls: [call('toolu_5', 'Read', {}, five)], isActive: false, isExpanded: false },
     })
-    const button = (await ui.findAll({ type: 'Button' })).find(b => b.props['label'] === '⤢')
+    const button = (await ui.findAll({ type: 'Button' })).find(b => b.props['label'] === '⤢ ')
     expect(button?.key).toBeDefined()
     await ui.press({ key: button?.key ?? '' })
     await ui.unmount()

@@ -168,7 +168,7 @@ function drawRow($: EngineInterface, e: Site, found: Found[], row: RenderElement
             <Box flexDirection="row" columnGap={ROW_GAP}>
               {added.length > ROW_THUMBS && <Text dimColor>{`+${added.length - ROW_THUMBS}`}</Text>}
               <Button key={`open-${first.n}`} plain dimColor onPress={() => void openViewer($, first.n - 1, viewport)}>
-                ⤢
+                {'⤢ '}
               </Button>
             </Box>
           </Box>
