@@ -28,6 +28,7 @@ const ROW_THUMB_COLUMNS = 8
 const ROW_THUMB_ROWS = 2
 const ROW_THUMB_MIN_COLUMNS = 2
 const ROW_GAP = 1
+const STRIP_INDENT = 5
 const SINGLE_MAX_COLUMNS = 80
 const SINGLE_MAX_ROWS = 20
 const VIEWER_MIN_ROWS = 12
@@ -145,65 +146,41 @@ function source(item: Item) {
   return { file: item.path, format: 'png' as const, generation: item.generation }
 }
 
-function isBlank(node: unknown): boolean {
-  if (node === null || node === undefined || node === false || node === '') return true
-  if (typeof node !== 'object') return false
-  const { type, children } = node as { type?: string; children?: unknown }
-  if (type !== 'Box' && type !== 'Text') return false
-  return Array.isArray(children) ? children.every(isBlank) : children === undefined || isBlank(children)
-}
-
 function drawRow($: EngineInterface, e: Site, found: Found[], row: RenderElement) {
   const { Box, Button, Image, Text } = $.ui.resolve(e)
   const viewport: RenderViewport | undefined = e.viewport
   const { added, errors } = collect(found)
   const first = added[0]
-  const group: RenderElement[] = []
-  if (first) {
-    if (added.length > ROW_THUMBS) group.push(<Text dimColor>{`+${added.length - ROW_THUMBS}`}</Text>)
-    for (const item of added.slice(0, ROW_THUMBS)) {
-      group.push(
-        <Image
-          key={`img-${item.n}`}
-          source={source(item)}
-          {...fitCells(item.size, ROW_THUMB_COLUMNS, ROW_THUMB_ROWS, ROW_THUMB_MIN_COLUMNS)}
-          alt={`[#${item.n} ${basename(item.label)}]`}
-        />,
-      )
-    }
-    group.push(
-      <Box alignSelf="flex-end">
-        <Button key={`open-${first.n}`} plain dimColor onPress={() => void openViewer($, first.n - 1, viewport)}>
-          ⤢
-        </Button>
-      </Box>,
-    )
-  }
-  const line = !first ? (
-    <Box flexDirection="row" alignItems="flex-end" paddingRight={THUMB_RIGHT_MARGIN}>
-      <Box flexGrow={1}>{row}</Box>
-    </Box>
-  ) : isBlank(row) ? (
-    <Box flexDirection="row" alignItems="flex-end" paddingLeft={THUMB_INDENT} columnGap={ROW_GAP}>
-      {group}
-    </Box>
-  ) : (
-    <Box flexDirection="row" alignItems="flex-end" paddingRight={THUMB_RIGHT_MARGIN}>
-      <Box flexGrow={1}>{row}</Box>
-      <Box flexDirection="row" alignItems="flex-end" columnGap={ROW_GAP}>
-        {group}
-      </Box>
-    </Box>
-  )
-  if (errors.length === 0) return line
   return (
     <Box flexDirection="column">
-      {line}
-      <Box flexDirection="column" paddingLeft={THUMB_INDENT}>
-        {errors.map((msg, i) => (
-          <Text key={`error-${i}`} dimColor>{`[${msg}]`}</Text>
-        ))}
-      </Box>
+      {row}
+      {first && (
+        <Box flexDirection="row" paddingLeft={STRIP_INDENT} columnGap={ROW_GAP}>
+          {added.slice(0, ROW_THUMBS).map(item => (
+            <Image
+              key={`img-${item.n}`}
+              source={source(item)}
+              {...fitCells(item.size, ROW_THUMB_COLUMNS, ROW_THUMB_ROWS, ROW_THUMB_MIN_COLUMNS)}
+              alt={`[#${item.n} ${basename(item.label)}]`}
+            />
+          ))}
+          <Box flexDirection="column" height={ROW_THUMB_ROWS} justifyContent="flex-end">
+            <Box flexDirection="row" columnGap={ROW_GAP}>
+              {added.length > ROW_THUMBS && <Text dimColor>{`+${added.length - ROW_THUMBS}`}</Text>}
+              <Button key={`open-${first.n}`} plain dimColor onPress={() => void openViewer($, first.n - 1, viewport)}>
+                ⤢
+              </Button>
+            </Box>
+          </Box>
+        </Box>
+      )}
+      {errors.length > 0 && (
+        <Box flexDirection="column" paddingLeft={STRIP_INDENT}>
+          {errors.map((msg, i) => (
+            <Text key={`error-${i}`} dimColor>{`[${msg}]`}</Text>
+          ))}
+        </Box>
+      )}
     </Box>
   )
 }

@@ -232,7 +232,9 @@ describe('tool result thumbnails', () => {
     expect(runs.length).toBe(8)
   })
 
-  test('one tool image draws on the engine row: row, small thumbnail, ⤢', async ($, on) => {
+  const strip = (tree: Node) => (tree.children ?? [])[1] as Node
+
+  test('one tool image: column with the engine row, then a strip below', async ($, on) => {
     intercept(on, {})
     await start($)
     const tree = (await $.ui.render({
@@ -243,32 +245,37 @@ describe('tool result thumbnails', () => {
       props: { tool_use_id: 'toolu_1', tool: 'Read', output: IMAGE_OUTPUT, isErrored: false },
     })) as RenderElement as Node
     expect(tree.type).toBe('Box')
-    expect(tree.props?.['flexDirection']).toBe('row')
-    expect(tree.props?.['alignItems']).toBe('flex-end')
-    const right = findAll(tree, 'Box').find(b => b !== tree && findAll(b, 'Image').length > 0)
-    expect(right?.props?.['alignItems']).toBe('flex-end')
-    const left = findAll(tree, 'Box').find(b => b.props?.['flexGrow'] === 1)
-    expect(textOf(left ?? {})).toContain(ENGINE_ROW)
-    const images = findAll(tree, 'Image')
+    expect(tree.props?.['flexDirection']).toBe('column')
+    expect(textOf((tree.children ?? [])[0] ?? '')).toBe(ENGINE_ROW)
+    expect(findAll((tree.children ?? [])[0], 'Image')).toHaveLength(0)
+    const bar = strip(tree)
+    expect(bar.props?.['flexDirection']).toBe('row')
+    expect(bar.props?.['paddingLeft']).toBe(5)
+    expect(bar.props?.['columnGap']).toBe(1)
+    const images = findAll(bar, 'Image')
     expect(images).toHaveLength(1)
     expect(images[0]?.props?.['rows']).toBe(2)
     expect(images[0]?.props?.['columns']).toBe(fitCells({ width: 640, height: 480 }, 8, 2, 2).columns)
-    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['⤢'])
-    const zoomBox = findAll(tree, 'Box').find(b => (b.children ?? []).some(k => typeof k !== 'string' && k.type === 'Button'))
-    expect(zoomBox?.props?.['alignSelf']).toBe('flex-end')
+    expect(findAll(bar, 'Button').map(labelOf)).toEqual(['⤢'])
   })
 
-  test('the engine row keeps 2 columns off the right edge', async ($, on) => {
+  test('5 images: 3 thumbnails, +2 and ⤢ bottom-aligned in a height-2 box', async ($, on) => {
     intercept(on, {})
     await start($)
+    const five = Array.from({ length: 5 }, () => IMAGE_OUTPUT[0])
     const tree = (await $.ui.render({
       surface: 'terminal',
-      component: 'ToolResult',
-      requestId: 'toolu_p',
+      component: 'ToolGroup',
+      requestId: 'group-6',
       viewport: { columns: 100, rows: 40 },
-      props: { tool_use_id: 'toolu_p', tool: 'Read', output: IMAGE_OUTPUT, isErrored: false },
+      props: { calls: [call('toolu_6', 'Read', {}, five)], isActive: false, isExpanded: false },
     })) as RenderElement as Node
-    expect(tree.props?.['paddingRight']).toBe(2)
+    const bar = strip(tree)
+    expect(findAll(bar, 'Image')).toHaveLength(3)
+    const tail = findAll(bar, 'Box').find(b => b.props?.['height'] === 2)
+    expect(tail?.props?.['justifyContent']).toBe('flex-end')
+    expect(findAll(tail, 'Text').map(textOf)).toContain('+2')
+    expect(findAll(tail, 'Button').map(labelOf)).toEqual(['⤢'])
   })
 
   const EMPTY_ROWS: [string, () => unknown][] = [
@@ -277,7 +284,7 @@ describe('tool result thumbnails', () => {
   ]
 
   for (const [name, empty] of EMPTY_ROWS) {
-    test(`an empty engine row (${name}) left-aligns the group with the transcript indent`, async ($, on) => {
+    test(`an empty engine row (${name}) still gets the strip below`, async ($, on) => {
       on('ui.render', { component: 'ToolResult' }, async () => empty() as RenderElement)
       intercept(on, {})
       await start($)
@@ -288,13 +295,9 @@ describe('tool result thumbnails', () => {
         viewport: { columns: 100, rows: 40 },
         props: { tool_use_id: 'toolu_e', tool: 'Read', output: IMAGE_OUTPUT, isErrored: false },
       })) as RenderElement as Node
-      expect(findAll(tree, 'Box').some(b => b.props?.['flexGrow'] === 1)).toBe(false)
-      expect(tree.props?.['flexDirection']).toBe('row')
-      expect(tree.props?.['alignItems']).toBe('flex-end')
-      expect(tree.props?.['paddingLeft']).toBe(2)
-      expect(tree.props?.['columnGap']).toBe(1)
-      expect(findAll(tree, 'Image')).toHaveLength(1)
-      expect(findAll(tree, 'Button').map(labelOf)).toEqual(['⤢'])
+      expect(tree.props?.['flexDirection']).toBe('column')
+      expect(findAll(strip(tree), 'Image')).toHaveLength(1)
+      expect(findAll(strip(tree), 'Button').map(labelOf)).toEqual(['⤢'])
     })
   }
 
@@ -308,8 +311,8 @@ describe('tool result thumbnails', () => {
       viewport: { columns: 100, rows: 40 },
       props: { calls: [call('toolu_g', 'Read', {}, IMAGE_OUTPUT)], isActive: false, isExpanded: false },
     })) as RenderElement as Node
-    expect(tree.props?.['flexDirection']).toBe('row')
-    expect(findAll(tree, 'Image').map(i => i.props?.['rows'])).toEqual([2])
+    expect(tree.props?.['flexDirection']).toBe('column')
+    expect(findAll(strip(tree), 'Image').map(i => i.props?.['rows'])).toEqual([2])
     expect(findAll(tree, 'Button').map(labelOf)).toEqual(['⤢'])
   })
 
