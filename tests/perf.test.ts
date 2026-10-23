@@ -4,7 +4,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { pruneArgv, register, resolveToolImage } from '../hooks/register'
 import { resetRegistry } from '../hooks/registry'
-import { Lru, MEMO_MAX, SOURCE_CACHE_MAX, resetSourceCache } from '../hooks/source'
+import { Lru, MEMO_MAX, canonicalPath, SOURCE_CACHE_MAX, resetSourceCache } from '../hooks/source'
 import { intercept, io, pngB64 } from './fixtures'
 
 const start = async ($: Engine) => {
@@ -468,6 +468,22 @@ describe('/gallery clear', () => {
     expect(paths.length).toBeGreaterThan(0)
   })
 
+  test('a spared referenced file is still touched hourly, never removed, however its path is spelled', async ($, on) => {
+    const { runs, clock } = intercept(on, files)
+    on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+    on('tool.call', async () => ({ result: JPEG as never }))
+    await start($)
+    await $.tool.call({ tool: 'Read', file_path: '/m.jpg', tool_use_id: 'toolu_k' } as never)
+    await message($, '![k](/private/tmp//t/./claude-gallery/toolu_k-0.jpg)')
+    await gallery($, 'clear')
+    await gallery($, 'clear')
+    const kept = '/tmp/t/claude-gallery/toolu_k-0.jpg'
+    expect(runs.filter(r => r.argv[0] === '/bin/rm').every(r => !r.argv.includes(kept))).toBe(true)
+    await clock.advance(61 * 60 * 1000)
+    const touch = runs.filter(r => r.argv[0] === '/usr/bin/touch').at(-1)
+    expect(touch?.argv).toContain(kept)
+  })
+
   test('a long list is removed in chunks', async ($, on) => {
     const { runs } = intercept(on, files)
     on('tool.call', async () => ({ result: { type: 'image', file: { base64: pngB64(4, 4), type: 'image/png' } } as never }))
@@ -535,5 +551,13 @@ describe('written extensions', () => {
     for (const raw of raws) expect(prune).toContain(`*.${raw.split('.').pop()}`)
     expect(prune).toContain('-iname')
     expect(prune).not.toContain('-name')
+  })
+})
+describe('canonicalPath', () => {
+  test('collapses slashes and dots and unifies /private aliases', () => {
+    expect(canonicalPath('//a/./b/../c')).toBe('/a/c')
+    expect(canonicalPath('/private/var/folders/x')).toBe('/var/folders/x')
+    expect(canonicalPath('/private/tmp/t')).toBe('/tmp/t')
+    expect(canonicalPath('/private/other')).toBe('/private/other')
   })
 })

@@ -57,6 +57,18 @@ export const written = new Set<string>()
 export const usedIds = new Lru<true>(MEMO_MAX)
 export const clearedIds = new Lru<true>(MEMO_MAX)
 
+/** 折疊 //、. 與 ..，並把 macOS 的 /private/{var,tmp,etc} 視為同一條路徑，讓不同寫法比得起來。 */
+export function canonicalPath(path: string): string {
+  const parts: string[] = []
+  for (const seg of path.split('/')) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') parts.pop()
+    else parts.push(seg)
+  }
+  if (parts[0] === 'private' && ['var', 'tmp', 'etc'].includes(parts[1] ?? '')) parts.shift()
+  return `/${parts.join('/')}`
+}
+
 /** AssistantMessage 的 ![](path) 引用過的路徑；/gallery clear 不刪這些。 */
 export const referenced = new Lru<true>(MEMO_MAX)
 

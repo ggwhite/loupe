@@ -6,7 +6,7 @@ import { fitCells, parseImageRefs, pngSize } from './layout'
 import type { Size } from './layout'
 import { addItem, items, resetRegistry, settle } from './registry'
 import type { Item } from './registry'
-import { cached, clearSourceCache, clearedIds, clearing, groupMemo, hash, referenced, remember, resultMemo, toolImages, usedIds, written } from './source'
+import { cached, canonicalPath, clearSourceCache, clearedIds, clearing, groupMemo, hash, referenced, remember, resultMemo, toolImages, usedIds, written } from './source'
 import type { Resolved, ToolImage } from './source'
 
 export const PANE_ID = 'gallery'
@@ -287,10 +287,13 @@ async function onWritten($: EngineInterface, prefix: string[], paths: string[]):
 async function clearSession($: EngineInterface): Promise<number> {
   clearing.generation++
   const count = items().length
-  const paths = [...written].filter(p => !referenced.get(p))
+  const all = [...written]
+  const spared = all.filter(p => referenced.get(canonicalPath(p)))
+  const paths = all.filter(p => !spared.includes(p))
   const ids = usedIds.keys()
   resetRegistry()
   clearSourceCache()
+  for (const p of spared) written.add(p)
   for (const id of ids) clearedIds.set(id, true)
   await update($, viewer, v => ({ index: LATEST, epoch: (v.epoch ?? 0) + 1 })).catch(() => undefined)
   await onWritten($, ['/bin/rm', '-f', '--'], paths)
@@ -398,7 +401,7 @@ export const register: Register = on => {
     const home = (await $.env.get('HOME').catch(() => undefined)) ?? ''
     const refs = parseImageRefs(e.props.text, home).slice(0, MAX_PER_MESSAGE)
     if (refs.length === 0) return next(e)
-    for (const path of refs) referenced.set(path, true)
+    for (const path of refs) referenced.set(canonicalPath(path), true)
     const found = await Promise.all(refs.map(async path => ({ r: await resolveFile($, path), label: path })))
     return drawThumbs($, e, found, await next(e))
   })
