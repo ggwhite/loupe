@@ -382,6 +382,40 @@ describe('/gallery clear', () => {
     expect(runs.filter(r => r.argv[0] === '/bin/rm')).toHaveLength(1)
   })
 
+  test('rows that redraw after clear write nothing and add nothing, new ids still work', async ($, on) => {
+    const { runs } = intercept(on, files)
+    on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+    on('tool.call', async () => ({ result: JPEG as never }))
+    await start($)
+    await $.tool.call({ tool: 'Read', file_path: '/m.jpg', tool_use_id: 'toolu_old' } as never)
+    await result($, 'toolu_res', JPEG)
+    await group($, 'g', [call('toolu_grp', [JPEG])])
+    await gallery($, 'clear')
+    const before = runs.length
+    for (const tree of [await result($, 'toolu_old', JPEG), await result($, 'toolu_res', JPEG), await group($, 'g', [call('toolu_grp', [JPEG])])]) {
+      expect(JSON.stringify(tree)).toBe(JSON.stringify(await result($, 'toolu_none', 'plain')))
+    }
+    expect(runs.length).toBe(before)
+    expect(JSON.stringify(await gallery($, ''))).toContain('還沒有圖片')
+    await $.tool.call({ tool: 'Read', file_path: '/n.jpg', tool_use_id: 'toolu_new' } as never)
+    expect(JSON.stringify(await gallery($, ''))).toContain('圖片檢視：1 張')
+    expect(JSON.stringify(await result($, 'toolu_new', JPEG))).toContain('"type":"Image"')
+  })
+
+  test('clear bumps the viewer epoch so the pane redraws even when already at the latest', async ($, on) => {
+    intercept(on, files)
+    const values: unknown[] = []
+    on('state.set', async (_$, e, next) => {
+      values.push(e.value)
+      return next(e)
+    })
+    await start($)
+    await gallery($, 'clear')
+    await gallery($, 'clear')
+    const epochs = values.map(v => (v as { epoch?: number }).epoch)
+    expect(epochs).toEqual([1, 2])
+  })
+
   test('a long list is removed in chunks', async ($, on) => {
     const { runs } = intercept(on, files)
     on('tool.call', async () => ({ result: { type: 'image', file: { base64: pngB64(4, 4), type: 'image/png' } } as never }))

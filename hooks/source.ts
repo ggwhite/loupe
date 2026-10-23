@@ -35,6 +35,10 @@ export class Lru<V> {
     this.map.clear()
   }
 
+  keys(): string[] {
+    return [...this.map.keys()]
+  }
+
   get size(): number {
     return this.map.size
   }
@@ -49,7 +53,13 @@ export const groupMemo = new Lru<unknown[]>(MEMO_MAX)
 /** 這個 session 寫進快取目錄的檔案；/gallery clear 與保鮮 touch 只動這些。 */
 export const written = new Set<string>()
 
+/** 出過圖的 tool_use_id；/gallery clear 把它們轉進 clearedIds，之後重畫就不再寫檔、加項目。 */
+export const usedIds = new Lru<true>(MEMO_MAX)
+export const clearedIds = new Lru<true>(MEMO_MAX)
+
 export function resetSourceCache(): void {
+  usedIds.clear()
+  clearedIds.clear()
   cache.clear()
   resultMemo.clear()
   groupMemo.clear()

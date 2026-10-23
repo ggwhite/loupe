@@ -6,7 +6,7 @@ import { fitCells, parseImageRefs, pngSize } from './layout'
 import type { Size } from './layout'
 import { addItem, items, resetRegistry, settle } from './registry'
 import type { Item } from './registry'
-import { cached, groupMemo, hash, remember, resetSourceCache, resultMemo, toolImages, written } from './source'
+import { cached, clearedIds, groupMemo, hash, remember, resetSourceCache, resultMemo, toolImages, usedIds, written } from './source'
 import type { Resolved, ToolImage } from './source'
 
 export const PANE_ID = 'gallery'
@@ -285,9 +285,11 @@ async function onWritten($: EngineInterface, prefix: string[], paths: string[]):
 async function clearSession($: EngineInterface): Promise<number> {
   const count = items().length
   const paths = [...written]
+  const ids = usedIds.keys()
   resetRegistry()
   resetSourceCache()
-  await update($, viewer, () => ({ index: LATEST })).catch(() => undefined)
+  for (const id of ids) clearedIds.set(id, true)
+  await update($, viewer, v => ({ index: LATEST, epoch: (v.epoch ?? 0) + 1 })).catch(() => undefined)
   await onWritten($, ['/bin/rm', '-f', '--'], paths)
   return count
 }
@@ -334,6 +336,7 @@ export const register: Register = on => {
       if (images.length === 0) return r
       const input = e as { file_path?: unknown }
       const label = typeof input.file_path === 'string' ? input.file_path : e.tool
+      usedIds.set(e.tool_use_id, true)
       const lazy = e.agentId !== undefined
       collect(await Promise.all(images.map(async (img, i) => ({ r: await resolveToolImage($, `${e.tool_use_id}-${i}`, img, lazy), label }))))
     } catch {}
@@ -397,6 +400,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
     if (e.surface !== 'terminal') return next(e)
     const id = e.props.tool_use_id
+    if (clearedIds.get(id)) return next(e)
     const memo = resultMemo.get(id) as Found[] | undefined
     if (memo) return memo.length === 0 ? next(e) : drawRow($, e, memo, await next(e))
     const output = e.props.output
@@ -406,6 +410,7 @@ export const register: Register = on => {
       resultMemo.set(id, [])
       return next(e)
     }
+    usedIds.set(id, true)
     const found = await Promise.all(
       images.map(async (img, i) => ({ r: await resolveToolImage($, `${id}-${i}`, img), label: `${e.props.tool} ${i + 1}` })),
     )
@@ -420,6 +425,7 @@ export const register: Register = on => {
     e.props.calls.forEach((call, ci) => {
       if (room <= 0) return
       const id = call.tool_use_id ?? `${e.requestId}-${ci}`
+      if (clearedIds.get(id)) return
       const memo = groupMemo.get(id) as Found[] | undefined
       if (memo) {
         const part = memo.slice(0, room)
@@ -432,6 +438,7 @@ export const register: Register = on => {
       const all = toolImages(call.output)
       const images = all.slice(0, room)
       room -= images.length
+      if (images.length > 0) usedIds.set(id, true)
       const part = Promise.all(images.map((img, i) => resolveToolImage($, `${id}-${i}`, img).then(r => ({ r, label }))))
       if (!call.isRunning && call.output !== undefined) {
         void part.then(found => {

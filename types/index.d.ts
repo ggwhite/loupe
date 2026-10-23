@@ -1,4 +1,4 @@
-export type Viewer = { index: number }
+export type Viewer = { index: number; epoch?: number }
 
 declare module 'claude-code' {
   interface PluginState {
