@@ -1,12 +1,54 @@
 import type { Size } from './layout'
 
 export type ToolImage = { base64: string; mime: string }
-export type Resolved = { path: string; size: Size | null; generation: number } | { error: string }
+/** pending：只寫了原始檔，還沒轉成 png（子代理的圖，等檢視區要顯示才轉）。 */
+export type Resolved = { path: string; size: Size | null; generation: number; pending?: true } | { error: string }
 
-const cache = new Map<string, Promise<Resolved>>()
+export const SOURCE_CACHE_MAX = 256
+export const MEMO_MAX = 2048
+
+/** 容量有上限的 Map：get 命中會移到最新，滿了就丟最久沒用的。 */
+export class Lru<V> {
+  private readonly map = new Map<string, V>()
+  constructor(private readonly cap: number) {}
+
+  get(key: string): V | undefined {
+    const v = this.map.get(key)
+    if (v === undefined) return undefined
+    this.map.delete(key)
+    this.map.set(key, v)
+    return v
+  }
+
+  set(key: string, value: V): void {
+    this.map.delete(key)
+    this.map.set(key, value)
+    if (this.map.size > this.cap) this.map.delete(this.map.keys().next().value as string)
+  }
+
+  delete(key: string): void {
+    this.map.delete(key)
+  }
+
+  clear(): void {
+    this.map.clear()
+  }
+
+  get size(): number {
+    return this.map.size
+  }
+}
+
+const cache = new Lru<Promise<Resolved>>(SOURCE_CACHE_MAX)
+
+/** 已定案的工具結果圖片（空陣列＝沒有圖），key 是 tool_use_id，ToolResult 與 ToolGroup 各一份。 */
+export const resultMemo = new Lru<unknown[]>(MEMO_MAX)
+export const groupMemo = new Lru<unknown[]>(MEMO_MAX)
 
 export function resetSourceCache(): void {
   cache.clear()
+  resultMemo.clear()
+  groupMemo.clear()
 }
 
 export function cached(key: string): Promise<Resolved> | undefined {

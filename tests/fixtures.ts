@@ -57,6 +57,7 @@ export const ENGINE_ROW = 'engine row'
 /** The same fake file map, served through the real test engine's fs, process and env events. */
 export function intercept(on: On, files: Record<string, FakeFile>, env: Record<string, string> | null = { HOME: '/Users/u', TMPDIR: '/tmp/t/' }) {
   const runs: { argv: string[]; stdin?: string }[] = []
+  const prunes: string[][] = []
   const stats: { path: string; resolve: boolean }[] = []
   let exitCode = 0
   if (env !== null) mock.env(on, env)
@@ -75,11 +76,13 @@ export function intercept(on: On, files: Record<string, FakeFile>, env: Record<s
     return { value: { base64: f.b64 } }
   })
   on('process.run', async (_$, e) => {
-    runs.push({ argv: [...e.argv], stdin: e.init?.stdin })
+    if (e.argv[0] === '/usr/bin/find') prunes.push([...e.argv])
+    else runs.push({ argv: [...e.argv], stdin: e.init?.stdin })
     return { value: { exitCode, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   return {
     runs,
+    prunes,
     stats,
     fail: (isFailing = true) => {
       exitCode = isFailing ? 1 : 0

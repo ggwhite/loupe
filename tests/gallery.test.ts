@@ -668,6 +668,7 @@ describe('cost of drawing', () => {
       return { value: '/Users/u' }
     })
     await start($)
+    gets.length = 0
     await message($, 'plain text, no pictures')
     expect(gets).toHaveLength(0)
     await message($, '![a](/a.png)')

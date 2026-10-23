@@ -4,9 +4,9 @@ import type { EngineInterface, Register, RenderElement, RenderInput, RenderViewp
 import type { Viewer } from '../types'
 import { fitCells, parseImageRefs, pngSize } from './layout'
 import type { Size } from './layout'
-import { addItem, items, resetRegistry } from './registry'
+import { addItem, items, resetRegistry, settle } from './registry'
 import type { Item } from './registry'
-import { cached, hash, remember, toolImages } from './source'
+import { cached, groupMemo, hash, remember, resultMemo, toolImages } from './source'
 import type { Resolved, ToolImage } from './source'
 
 export const PANE_ID = 'gallery'
@@ -79,11 +79,22 @@ export async function resolveFile($: EngineInterface, path: string): Promise<Res
   return cached(key) ?? remember(key, toPng($, path, generation), true)
 }
 
-export async function resolveToolImage($: EngineInterface, key: string, image: ToolImage): Promise<Resolved> {
+/** 把只寫了原始檔的圖轉成 png；同一個檔只轉一次，轉完該編號改指向 png。 */
+export async function convertPending($: EngineInterface, raw: string): Promise<Resolved> {
+  const r = await (cached(`lazy|${raw}`) ?? remember(`lazy|${raw}`, toPng($, raw, 0)))
+  if (!('error' in r)) settle(raw, r)
+  return r
+}
+
+export async function resolveToolImage($: EngineInterface, key: string, image: ToolImage, lazy = false): Promise<Resolved> {
   const name = key.replace(/[^A-Za-z0-9_-]/g, '_')
   const cacheKey = `tool|${name}`
   const hit = cached(cacheKey)
-  if (hit) return hit
+  if (hit) {
+    const r = await hit
+    if (lazy || !('pending' in r) || !r.pending) return r
+    return convertPending($, r.path)
+  }
   return remember(
     cacheKey,
     (async (): Promise<Resolved> => {
@@ -94,6 +105,7 @@ export async function resolveToolImage($: EngineInterface, key: string, image: T
       const ok = await run($, ['/bin/sh', '-c', 'mkdir -p "$1" && /usr/bin/base64 -D > "$2"', 'sh', dir, raw], image.base64)
       if (!ok) return { error: '圖片寫入失敗' }
       if (size !== null) return { path: raw, size, generation: 0 }
+      if (lazy) return { path: raw, size: null, generation: 0, pending: true }
       return toPng($, raw, 0)
     })(),
   )
@@ -249,8 +261,19 @@ function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderEl
   )
 }
 
+const PRUNE_AFTER_MINUTES = 24 * 60
+const PRUNE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'img', 'heic', 'bmp', 'tiff']
+
+export function pruneArgv(dir: string): string[] {
+  const names = PRUNE_EXTENSIONS.flatMap((ext, i) => (i === 0 ? ['-name', `*.${ext}`] : ['-o', '-name', `*.${ext}`]))
+  return ['/usr/bin/find', dir, '-maxdepth', '1', '-type', 'f', '-mmin', `+${PRUNE_AFTER_MINUTES}`, '(', ...names, ')', '-delete']
+}
+
+const allResolved = (found: Found[]): boolean => found.every(f => !('error' in f.r))
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    void cacheDir($).then(dir => run($, pruneArgv(dir)))
     try {
       await $.command.register({ name: 'gallery', description: '開啟圖片檢視區，從最新一張開始', immediate: true })
     } catch {}
@@ -278,7 +301,8 @@ export const register: Register = on => {
       if (images.length === 0) return r
       const input = e as { file_path?: unknown }
       const label = typeof input.file_path === 'string' ? input.file_path : e.tool
-      collect(await Promise.all(images.map(async (img, i) => ({ r: await resolveToolImage($, `${e.tool_use_id}-${i}`, img), label }))))
+      const lazy = e.agentId !== undefined
+      collect(await Promise.all(images.map(async (img, i) => ({ r: await resolveToolImage($, `${e.tool_use_id}-${i}`, img, lazy), label }))))
     } catch {}
     return r
   })
@@ -291,6 +315,7 @@ export const register: Register = on => {
     const { index } = await read($, viewer).catch(() => ({ index: LATEST }))
     const i = index === LATEST ? list.length - 1 : Math.max(0, Math.min(list.length - 1, index))
     const item = list[i] as Item
+    const failure = item.pending ? await convertPending($, item.path).then(r => ('error' in r ? r.error : null)) : null
     const alive = await $.fs.exists(item.path).catch(() => false)
     const cells = fitCells(
       item.size,
@@ -304,7 +329,9 @@ export const register: Register = on => {
           {'  '}
           <Text dimColor>{basename(item.label)}</Text>
         </Text>
-        {alive ? (
+        {failure !== null ? (
+          <Text dimColor>{`[${failure}]`}</Text>
+        ) : alive ? (
           <Image
             key="view"
             source={source(item)}
@@ -336,26 +363,51 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
     if (e.surface !== 'terminal') return next(e)
-    const images = toolImages(e.props.output).slice(0, MAX_PER_MESSAGE)
-    if (images.length === 0) return next(e)
+    const id = e.props.tool_use_id
+    const memo = resultMemo.get(id) as Found[] | undefined
+    if (memo) return memo.length === 0 ? next(e) : drawRow($, e, memo, await next(e))
+    const output = e.props.output
+    if (output === null || typeof output !== 'object') return next(e)
+    const images = toolImages(output).slice(0, MAX_PER_MESSAGE)
+    if (images.length === 0) {
+      resultMemo.set(id, [])
+      return next(e)
+    }
     const found = await Promise.all(
-      images.map(async (img, i) => ({ r: await resolveToolImage($, `${e.props.tool_use_id}-${i}`, img), label: `${e.props.tool} ${i + 1}` })),
+      images.map(async (img, i) => ({ r: await resolveToolImage($, `${id}-${i}`, img), label: `${e.props.tool} ${i + 1}` })),
     )
+    if (allResolved(found)) resultMemo.set(id, found)
     return drawRow($, e, found, await next(e))
   })
 
   on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
     if (e.surface !== 'terminal') return next(e)
-    const jobs: Promise<Found>[] = []
+    const parts: Promise<Found[]>[] = []
+    let room = MAX_PER_MESSAGE
     e.props.calls.forEach((call, ci) => {
+      if (room <= 0) return
+      const id = call.tool_use_id ?? `${e.requestId}-${ci}`
+      const memo = groupMemo.get(id) as Found[] | undefined
+      if (memo) {
+        const part = memo.slice(0, room)
+        room -= part.length
+        if (part.length > 0) parts.push(Promise.resolve(part))
+        return
+      }
       const input = call.input as { file_path?: unknown } | null
       const label = typeof input?.file_path === 'string' ? input.file_path : call.tool
-      toolImages(call.output).forEach((img, i) => {
-        if (jobs.length >= MAX_PER_MESSAGE) return
-        jobs.push(resolveToolImage($, `${call.tool_use_id ?? `${e.requestId}-${ci}`}-${i}`, img).then(r => ({ r, label })))
-      })
+      const all = toolImages(call.output)
+      const images = all.slice(0, room)
+      room -= images.length
+      const part = Promise.all(images.map((img, i) => resolveToolImage($, `${id}-${i}`, img).then(r => ({ r, label }))))
+      if (!call.isRunning && call.output !== undefined) {
+        void part.then(found => {
+          if (all.length === images.length && allResolved(found)) groupMemo.set(id, found)
+        })
+      }
+      if (images.length > 0) parts.push(part)
     })
-    if (jobs.length === 0) return next(e)
-    return drawRow($, e, await Promise.all(jobs), await next(e))
+    if (parts.length === 0) return next(e)
+    return drawRow($, e, (await Promise.all(parts)).flat(), await next(e))
   })
 }
