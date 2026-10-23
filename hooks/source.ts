@@ -2,7 +2,8 @@ import type { Size } from './layout'
 
 export type ToolImage = { base64: string; mime: string }
 /** pending：只寫了原始檔，還沒轉成 png（子代理的圖，等檢視區要顯示才轉）。 */
-export type Resolved = { path: string; size: Size | null; generation: number; pending?: true } | { error: string }
+/** ref：工具圖片的快取名稱，註冊表用它當編號的 id，讓同一張圖不論何時解析都對到同一項。 */
+export type Resolved = { path: string; size: Size | null; generation: number; pending?: true; ref?: string } | { error: string }
 
 export const SOURCE_CACHE_MAX = 256
 export const MEMO_MAX = 2048
@@ -45,10 +46,14 @@ const cache = new Lru<Promise<Resolved>>(SOURCE_CACHE_MAX)
 export const resultMemo = new Lru<unknown[]>(MEMO_MAX)
 export const groupMemo = new Lru<unknown[]>(MEMO_MAX)
 
+/** 這個 session 寫進快取目錄的檔案；/gallery clear 與保鮮 touch 只動這些。 */
+export const written = new Set<string>()
+
 export function resetSourceCache(): void {
   cache.clear()
   resultMemo.clear()
   groupMemo.clear()
+  written.clear()
 }
 
 export function cached(key: string): Promise<Resolved> | undefined {

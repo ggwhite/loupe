@@ -60,6 +60,7 @@ export function intercept(on: On, files: Record<string, FakeFile>, env: Record<s
   const prunes: string[][] = []
   const stats: { path: string; resolve: boolean }[] = []
   let exitCode = 0
+  const clock = mock.clock(on)
   if (env !== null) mock.env(on, env)
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
   on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: ENGINE_ROW }))
@@ -81,6 +82,7 @@ export function intercept(on: On, files: Record<string, FakeFile>, env: Record<s
     return { value: { exitCode, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   return {
+    clock,
     runs,
     prunes,
     stats,

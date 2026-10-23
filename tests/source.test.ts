@@ -74,7 +74,7 @@ describe('resolveToolImage', () => {
     const img = { base64: pngB64(640, 480), mime: 'image/png' }
     const r1 = await resolveToolImage($, 'toolu_1-0', img)
     await resolveToolImage($, 'toolu_1-0', img)
-    expect(r1).toEqual({ path: '/tmp/t/claude-gallery/toolu_1-0.png', size: { width: 640, height: 480 }, generation: 0 })
+    expect(r1).toEqual({ path: '/tmp/t/claude-gallery/toolu_1-0.png', size: { width: 640, height: 480 }, generation: 0, ref: 'tool|toolu_1-0' })
     expect(runs.length).toBe(1)
     expect(runs[0]?.stdin).toBe(img.base64)
     expect(runs[0]?.argv).toContain('/tmp/t/claude-gallery/toolu_1-0.png')

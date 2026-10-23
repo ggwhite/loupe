@@ -6,7 +6,7 @@ import { fitCells, parseImageRefs, pngSize } from './layout'
 import type { Size } from './layout'
 import { addItem, items, resetRegistry, settle } from './registry'
 import type { Item } from './registry'
-import { cached, groupMemo, hash, remember, resultMemo, toolImages } from './source'
+import { cached, groupMemo, hash, remember, resetSourceCache, resultMemo, toolImages, written } from './source'
 import type { Resolved, ToolImage } from './source'
 
 export const PANE_ID = 'gallery'
@@ -36,6 +36,9 @@ const VIEWER_ROW_MARGIN = 8
 const VIEWER_WIDTH = 0.7
 const FALLBACK_VIEWPORT = { columns: 100, rows: 40 }
 const LATEST = -1
+const HOUR_MS = 60 * 60 * 1000
+const CHUNK = 100
+const WRITE_EXTENSIONS = ['png', 'jpg', 'gif', 'webp', 'heic', 'bmp', 'tiff', 'svg', 'ico', 'img']
 
 export const viewer = atom({ plugin: 'gallery', key: 'viewer' } as const, { index: 0 } as Viewer)
 
@@ -66,6 +69,7 @@ async function toPng($: EngineInterface, src: string, generation: number): Promi
   if (/\.png$/i.test(src)) return { path: src, size: await sizeOf($, src), generation }
   const dir = await cacheDir($)
   const out = `${dir}/${hash(`${src}|${generation}`)}.png`
+  written.add(out)
   const ok = await run($, ['/bin/sh', '-c', 'mkdir -p "$1" && /usr/bin/sips -s format png "$2" --out "$3" >/dev/null', 'sh', dir, src, out])
   if (!ok) return { error: `轉檔失敗: ${src}` }
   return { path: out, size: await sizeOf($, out), generation }
@@ -80,9 +84,9 @@ export async function resolveFile($: EngineInterface, path: string): Promise<Res
 }
 
 /** 把只寫了原始檔的圖轉成 png；同一個檔只轉一次，轉完該編號改指向 png。 */
-export async function convertPending($: EngineInterface, raw: string): Promise<Resolved> {
+export async function convertPending($: EngineInterface, raw: string, id: string): Promise<Resolved> {
   const r = await (cached(`lazy|${raw}`) ?? remember(`lazy|${raw}`, toPng($, raw, 0)))
-  if (!('error' in r)) settle(raw, r)
+  if (!('error' in r)) settle(id, r)
   return r
 }
 
@@ -93,20 +97,23 @@ export async function resolveToolImage($: EngineInterface, key: string, image: T
   if (hit) {
     const r = await hit
     if (lazy || !('pending' in r) || !r.pending) return r
-    return convertPending($, r.path)
+    return convertPending($, r.path, cacheKey).then(done => ('error' in done ? done : { ...done, ref: cacheKey }))
   }
   return remember(
     cacheKey,
     (async (): Promise<Resolved> => {
       const dir = await cacheDir($)
-      const ext = (image.mime.split('/')[1] ?? 'png').replace('jpeg', 'jpg')
+      const subtype = (image.mime.split('/')[1] ?? 'png').split(/[+;]/)[0]?.toLowerCase().replace('jpeg', 'jpg') ?? 'png'
+      const ext = WRITE_EXTENSIONS.includes(subtype) ? subtype : 'img'
       const size = ext === 'png' ? pngSize(image.base64) : null
       const raw = `${dir}/${name}.${ext === 'png' && size === null ? 'img' : ext}`
+      written.add(raw)
       const ok = await run($, ['/bin/sh', '-c', 'mkdir -p "$1" && /usr/bin/base64 -D > "$2"', 'sh', dir, raw], image.base64)
       if (!ok) return { error: '圖片寫入失敗' }
-      if (size !== null) return { path: raw, size, generation: 0 }
-      if (lazy) return { path: raw, size: null, generation: 0, pending: true }
-      return toPng($, raw, 0)
+      if (size !== null) return { path: raw, size, generation: 0, ref: cacheKey }
+      if (lazy) return { path: raw, size: null, generation: 0, pending: true, ref: cacheKey }
+      const png = await toPng($, raw, 0)
+      return 'error' in png ? png : { ...png, ref: cacheKey }
     })(),
   )
 }
@@ -262,20 +269,42 @@ function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderEl
 }
 
 const PRUNE_AFTER_MINUTES = 24 * 60
-const PRUNE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'img', 'heic', 'bmp', 'tiff']
 
 export function pruneArgv(dir: string): string[] {
-  const names = PRUNE_EXTENSIONS.flatMap((ext, i) => (i === 0 ? ['-name', `*.${ext}`] : ['-o', '-name', `*.${ext}`]))
+  const names = WRITE_EXTENSIONS.flatMap((ext, i) => (i === 0 ? ['-iname', `*.${ext}`] : ['-o', '-iname', `*.${ext}`]))
   return ['/usr/bin/find', dir, '-maxdepth', '1', '-type', 'f', '-mmin', `+${PRUNE_AFTER_MINUTES}`, '(', ...names, ')', '-delete']
 }
+
+/** 對本 session 寫過、且確實在快取目錄內的檔案，分批跑 argv 前綴加檔案清單。 */
+async function onWritten($: EngineInterface, prefix: string[], paths: string[]): Promise<void> {
+  const dir = await cacheDir($)
+  const own = paths.filter(p => p.startsWith(`${dir}/`))
+  for (let i = 0; i < own.length; i += CHUNK) await run($, [...prefix, ...own.slice(i, i + CHUNK)])
+}
+
+async function clearSession($: EngineInterface): Promise<number> {
+  const count = items().length
+  const paths = [...written]
+  resetRegistry()
+  resetSourceCache()
+  await update($, viewer, () => ({ index: LATEST })).catch(() => undefined)
+  await onWritten($, ['/bin/rm', '-f', '--'], paths)
+  return count
+}
+
+let refresh: { cancel: () => void } | undefined
 
 const allResolved = (found: Found[]): boolean => found.every(f => !('error' in f.r))
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     void cacheDir($).then(dir => run($, pruneArgv(dir)))
+    refresh?.cancel()
     try {
-      await $.command.register({ name: 'gallery', description: '開啟圖片檢視區，從最新一張開始', immediate: true })
+      refresh = $.clock.every(HOUR_MS, () => void onWritten($, ['/usr/bin/touch', '-c', '--'], [...written]))
+    } catch {}
+    try {
+      await $.command.register({ name: 'gallery', description: '開啟圖片檢視區，從最新一張開始；clear 清除本次對話的圖片', immediate: true })
     } catch {}
     return next(e)
   })
@@ -289,6 +318,10 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'gallery' }, async ($, e) => {
+    if (e.args.trim() === 'clear') {
+      const count = await clearSession($)
+      return { text: count === 0 ? '還沒有圖片' : `已清除 ${count} 張圖片` }
+    }
     const count = items().length
     if (!(await openViewer($, LATEST, { columns: e.presentation.columns }))) return { text: '[無法開啟檢視區]' }
     return { text: count === 0 ? '還沒有圖片' : `圖片檢視：${count} 張` }
@@ -310,12 +343,12 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e, next) => {
     if (e.surface !== 'terminal') return next(e)
     const { Box, Button, Image, Text } = $.ui.resolve(e)
+    const { index } = await read($, viewer).catch(() => ({ index: LATEST }))
     const list = items()
     if (list.length === 0) return <Text dimColor>還沒有圖片</Text>
-    const { index } = await read($, viewer).catch(() => ({ index: LATEST }))
     const i = index === LATEST ? list.length - 1 : Math.max(0, Math.min(list.length - 1, index))
     const item = list[i] as Item
-    const failure = item.pending ? await convertPending($, item.path).then(r => ('error' in r ? r.error : null)) : null
+    const failure = item.pending ? await convertPending($, item.path, item.id).then(r => ('error' in r ? r.error : null)) : null
     const alive = await $.fs.exists(item.path).catch(() => false)
     const cells = fitCells(
       item.size,
