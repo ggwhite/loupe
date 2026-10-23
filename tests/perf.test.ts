@@ -416,6 +416,58 @@ describe('/gallery clear', () => {
     expect(epochs).toEqual([1, 2])
   })
 
+  test('a second clear does not forget ids cleared by the first', async ($, on) => {
+    const { runs } = intercept(on, files)
+    on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+    on('tool.call', async () => ({ result: JPEG as never }))
+    await start($)
+    await $.tool.call({ tool: 'Read', file_path: '/a.jpg', tool_use_id: 'toolu_A' } as never)
+    await gallery($, 'clear')
+    await $.tool.call({ tool: 'Read', file_path: '/b.jpg', tool_use_id: 'toolu_B' } as never)
+    await gallery($, 'clear')
+    const before = runs.length
+    const plain = JSON.stringify(await result($, 'toolu_none', 'plain'))
+    expect(JSON.stringify(await result($, 'toolu_A', JPEG))).toBe(plain)
+    expect(JSON.stringify(await result($, 'toolu_B', JPEG))).toBe(plain)
+    expect(runs.length).toBe(before)
+    expect(JSON.stringify(await gallery($, ''))).toContain('還沒有圖片')
+  })
+
+  test('a write in flight during clear adds no item and its file stays tracked', async ($, on) => {
+    const { runs, hold, clock } = intercept(on, files)
+    on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+    on('tool.call', async () => ({ result: JPEG as never }))
+    await start($)
+    const release = hold()
+    const pending = $.tool.call({ tool: 'Read', file_path: '/r.jpg', tool_use_id: 'toolu_race' } as never)
+    await clock.settle()
+    expect(JSON.stringify(await gallery($, 'clear'))).toContain('還沒有圖片')
+    release()
+    await pending
+    await clock.settle()
+    expect(JSON.stringify(await gallery($, ''))).toContain('還沒有圖片')
+    const before = runs.filter(r => r.argv[0] === '/usr/bin/touch').length
+    await clock.advance(61 * 60 * 1000)
+    const touch = runs.filter(r => r.argv[0] === '/usr/bin/touch')
+    expect(touch.length).toBeGreaterThan(before)
+    expect(touch.at(-1)?.argv.some(p => p.endsWith('/toolu_race-0.jpg'))).toBe(true)
+    await gallery($, 'clear')
+    expect(runs.filter(r => r.argv[0] === '/bin/rm').at(-1)?.argv.some(p => p.endsWith('/toolu_race-0.jpg'))).toBe(true)
+  })
+
+  test('clear keeps a cache-dir file that an assistant message referenced', async ($, on) => {
+    const { runs } = intercept(on, files)
+    on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+    on('tool.call', async () => ({ result: JPEG as never }))
+    await start($)
+    await $.tool.call({ tool: 'Read', file_path: '/m.jpg', tool_use_id: 'toolu_k' } as never)
+    await message($, '![k](/tmp/t/claude-gallery/toolu_k-0.jpg)')
+    await gallery($, 'clear')
+    const paths = (runs.find(r => r.argv[0] === '/bin/rm')?.argv ?? []).slice(3)
+    expect(paths).not.toContain('/tmp/t/claude-gallery/toolu_k-0.jpg')
+    expect(paths.length).toBeGreaterThan(0)
+  })
+
   test('a long list is removed in chunks', async ($, on) => {
     const { runs } = intercept(on, files)
     on('tool.call', async () => ({ result: { type: 'image', file: { base64: pngB64(4, 4), type: 'image/png' } } as never }))

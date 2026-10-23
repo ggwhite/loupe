@@ -6,7 +6,7 @@ import { fitCells, parseImageRefs, pngSize } from './layout'
 import type { Size } from './layout'
 import { addItem, items, resetRegistry, settle } from './registry'
 import type { Item } from './registry'
-import { cached, clearedIds, groupMemo, hash, remember, resetSourceCache, resultMemo, toolImages, usedIds, written } from './source'
+import { cached, clearSourceCache, clearedIds, clearing, groupMemo, hash, referenced, remember, resultMemo, toolImages, usedIds, written } from './source'
 import type { Resolved, ToolImage } from './source'
 
 export const PANE_ID = 'gallery'
@@ -71,6 +71,7 @@ async function toPng($: EngineInterface, src: string, generation: number): Promi
   const out = `${dir}/${hash(`${src}|${generation}`)}.png`
   written.add(out)
   const ok = await run($, ['/bin/sh', '-c', 'mkdir -p "$1" && /usr/bin/sips -s format png "$2" --out "$3" >/dev/null', 'sh', dir, src, out])
+  written.add(out)
   if (!ok) return { error: `轉檔失敗: ${src}` }
   return { path: out, size: await sizeOf($, out), generation }
 }
@@ -109,6 +110,7 @@ export async function resolveToolImage($: EngineInterface, key: string, image: T
       const raw = `${dir}/${name}.${ext === 'png' && size === null ? 'img' : ext}`
       written.add(raw)
       const ok = await run($, ['/bin/sh', '-c', 'mkdir -p "$1" && /usr/bin/base64 -D > "$2"', 'sh', dir, raw], image.base64)
+      written.add(raw)
       if (!ok) return { error: '圖片寫入失敗' }
       if (size !== null) return { path: raw, size, generation: 0, ref: cacheKey }
       if (lazy) return { path: raw, size: null, generation: 0, pending: true, ref: cacheKey }
@@ -283,11 +285,12 @@ async function onWritten($: EngineInterface, prefix: string[], paths: string[]):
 }
 
 async function clearSession($: EngineInterface): Promise<number> {
+  clearing.generation++
   const count = items().length
-  const paths = [...written]
+  const paths = [...written].filter(p => !referenced.get(p))
   const ids = usedIds.keys()
   resetRegistry()
-  resetSourceCache()
+  clearSourceCache()
   for (const id of ids) clearedIds.set(id, true)
   await update($, viewer, v => ({ index: LATEST, epoch: (v.epoch ?? 0) + 1 })).catch(() => undefined)
   await onWritten($, ['/bin/rm', '-f', '--'], paths)
@@ -338,7 +341,9 @@ export const register: Register = on => {
       const label = typeof input.file_path === 'string' ? input.file_path : e.tool
       usedIds.set(e.tool_use_id, true)
       const lazy = e.agentId !== undefined
-      collect(await Promise.all(images.map(async (img, i) => ({ r: await resolveToolImage($, `${e.tool_use_id}-${i}`, img, lazy), label }))))
+      const generation = clearing.generation
+      const found = await Promise.all(images.map(async (img, i) => ({ r: await resolveToolImage($, `${e.tool_use_id}-${i}`, img, lazy), label })))
+      if (generation === clearing.generation) collect(found)
     } catch {}
     return r
   })
@@ -393,6 +398,7 @@ export const register: Register = on => {
     const home = (await $.env.get('HOME').catch(() => undefined)) ?? ''
     const refs = parseImageRefs(e.props.text, home).slice(0, MAX_PER_MESSAGE)
     if (refs.length === 0) return next(e)
+    for (const path of refs) referenced.set(path, true)
     const found = await Promise.all(refs.map(async path => ({ r: await resolveFile($, path), label: path })))
     return drawThumbs($, e, found, await next(e))
   })
@@ -411,9 +417,11 @@ export const register: Register = on => {
       return next(e)
     }
     usedIds.set(id, true)
+    const generation = clearing.generation
     const found = await Promise.all(
       images.map(async (img, i) => ({ r: await resolveToolImage($, `${id}-${i}`, img), label: `${e.props.tool} ${i + 1}` })),
     )
+    if (generation !== clearing.generation) return next(e)
     if (allResolved(found)) resultMemo.set(id, found)
     return drawRow($, e, found, await next(e))
   })
@@ -421,6 +429,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
     if (e.surface !== 'terminal') return next(e)
     const parts: Promise<Found[]>[] = []
+    const generation = clearing.generation
     let room = MAX_PER_MESSAGE
     e.props.calls.forEach((call, ci) => {
       if (room <= 0) return
@@ -442,12 +451,14 @@ export const register: Register = on => {
       const part = Promise.all(images.map((img, i) => resolveToolImage($, `${id}-${i}`, img).then(r => ({ r, label }))))
       if (!call.isRunning && call.output !== undefined) {
         void part.then(found => {
-          if (all.length === images.length && allResolved(found)) groupMemo.set(id, found)
+          if (generation === clearing.generation && all.length === images.length && allResolved(found)) groupMemo.set(id, found)
         })
       }
       if (images.length > 0) parts.push(part)
     })
     if (parts.length === 0) return next(e)
-    return drawRow($, e, (await Promise.all(parts)).flat(), await next(e))
+    const found = (await Promise.all(parts)).flat()
+    if (generation !== clearing.generation) return next(e)
+    return drawRow($, e, found, await next(e))
   })
 }

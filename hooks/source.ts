@@ -57,13 +57,25 @@ export const written = new Set<string>()
 export const usedIds = new Lru<true>(MEMO_MAX)
 export const clearedIds = new Lru<true>(MEMO_MAX)
 
-export function resetSourceCache(): void {
+/** AssistantMessage 的 ![](path) 引用過的路徑；/gallery clear 不刪這些。 */
+export const referenced = new Lru<true>(MEMO_MAX)
+
+/** 每次 /gallery clear 加一；開始寫圖時記下它，寫完發現變了就不能再加項目。 */
+export const clearing = { generation: 0 }
+
+/** /gallery clear 用：清掉這個 session 的圖片狀態，但保留 clearedIds 與 referenced。 */
+export function clearSourceCache(): void {
   usedIds.clear()
-  clearedIds.clear()
   cache.clear()
   resultMemo.clear()
   groupMemo.clear()
   written.clear()
+}
+
+export function resetSourceCache(): void {
+  clearSourceCache()
+  clearedIds.clear()
+  referenced.clear()
 }
 
 export function cached(key: string): Promise<Resolved> | undefined {
