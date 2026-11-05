@@ -185,9 +185,9 @@ describe('lru', () => {
 
 describe('cache pruning', () => {
   test('session.start prunes old files in the cache dir by argv', async ($, on) => {
-    const { prunes } = intercept(on, {})
+    const { clock, prunes } = intercept(on, {})
     await start($)
-    await new Promise(r => setTimeout(r, 0))
+    await clock.settle()
     expect(prunes).toHaveLength(1)
     const argv = prunes[0] as string[]
     expect(argv.slice(0, 7)).toEqual(['/usr/bin/find', '/tmp/t/claude-loupe', '-maxdepth', '1', '-type', 'f', '-mmin'])
@@ -207,7 +207,6 @@ describe('render cost with 516 tool results (33 with images), 5 passes', () => {
       i % 16 === 0 && i < 33 * 16 ? counted(IMAGE, hits) : counted({ stdout: `o${i}`, content: [{ type: 'text' }] }, hits),
     )
     for (let pass = 0; pass < 5; pass++) for (let i = 0; i < 516; i++) await h.result(`toolu_${i}`, outputs[i])
-    console.log(`walks=${hits.walks} imageReads=${hits.images} runs=${h.runs.length}`)
     expect(hits.images).toBe(33)
   })
 })
