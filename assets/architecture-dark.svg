@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="380" viewBox="0 0 1100 380" role="img" aria-labelledby="title desc">
+<title id="title">How loupe opens an image</title>
+<desc id="desc">A thumbnail's view button or /loupe opens the viewer. Inside herdr, loupe splits a herdr pane, zooms it over the window and runs bin/loupe-view, which draws with the kitty graphics protocol and crops with sips. Outside herdr, or when a herdr step fails, it opens the in-Claude pane.</desc>
+<style>.sans{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.b{font-weight:600}.cap{font-size:14px;letter-spacing:1.2px;font-weight:600}</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 Z" fill="#9198A1"/></marker>
+<marker id="aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 Z" fill="#F2B84B"/></marker></defs>
+<rect width="1100" height="380" fill="#0D1117"/>
+<text x="40" y="44" class="sans cap" fill="#9198A1">OPEN</text>
+<text x="330" y="44" class="sans cap" fill="#9198A1">HERDR (HERDR_ENV=1)</text>
+<text x="740" y="44" class="sans cap" fill="#9198A1">VIEWER</text>
+<rect x="40" y="70" width="240" height="110" rx="10" fill="#161B22" stroke="#30363D" stroke-width="1.5"/>
+<text x="58" y="100" class="sans b" font-size="17" fill="#E6EDF3">Thumbnail</text>
+<text x="58" y="124" class="mono" font-size="13" fill="#9198A1">⤢ view #n button</text>
+<text x="58" y="145" class="mono" font-size="13" fill="#9198A1">⤢ on a tool row</text>
+<text x="58" y="166" class="mono" font-size="13" fill="#9198A1">/loupe</text>
+<rect x="330" y="70" width="360" height="110" rx="10" fill="#161B22" stroke="#30363D" stroke-width="1.5"/>
+<text x="348" y="100" class="sans b" font-size="17" fill="#E6EDF3">Split + zoom a pane</text>
+<text x="348" y="124" class="mono" font-size="13" fill="#9198A1">herdr pane split --focus</text>
+<text x="348" y="145" class="mono" font-size="13" fill="#9198A1">herdr pane zoom --on</text>
+<text x="348" y="166" class="mono" font-size="13" fill="#9198A1">herdr pane run loupe-view …</text>
+<rect x="740" y="70" width="320" height="110" rx="10" fill="#2A2112" stroke="#6B5222" stroke-width="1.5"/>
+<text x="758" y="100" class="sans b" font-size="17" fill="#F2B84B">bin/loupe-view</text>
+<text x="758" y="124" class="mono" font-size="13" fill="#9198A1">kitty graphics, a=T,f=100,t=f</text>
+<text x="758" y="145" class="mono" font-size="13" fill="#9198A1">zoom = sips crop</text>
+<text x="758" y="166" class="mono" font-size="13" fill="#9198A1">keys + SGR mouse</text>
+<rect x="740" y="240" width="320" height="110" rx="10" fill="#161B22" stroke="#30363D" stroke-width="1.5"/>
+<text x="758" y="270" class="sans b" font-size="17" fill="#E6EDF3">In-Claude pane</text>
+<text x="758" y="294" class="mono" font-size="13" fill="#9198A1">Claude Code pane (≤ 45%)</text>
+<text x="758" y="315" class="mono" font-size="13" fill="#9198A1">zoom = sips crop</text>
+<text x="758" y="336" class="mono" font-size="13" fill="#9198A1">keys + buttons</text>
+<path d="M280,125 H326" stroke="#9198A1" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M690,125 H736" stroke="#F2B84B" stroke-width="1.5" fill="none" marker-end="url(#aha)"/>
+<path d="M160,180 V295 H736" stroke="#9198A1" stroke-width="1.5" fill="none" stroke-dasharray="5 5" marker-end="url(#ah)"/>
+<path d="M510,180 V295" stroke="#9198A1" stroke-width="1.5" fill="none" stroke-dasharray="5 5"/>
+<text x="176" y="285" class="sans" font-size="14" fill="#9198A1">not in herdr</text>
+<text x="526" y="285" class="sans" font-size="14" fill="#9198A1">a step fails: close the pane</text>
+</svg>
