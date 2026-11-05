@@ -23,8 +23,8 @@ const findAll = (n: Node | string | undefined, type: string, out: Node[] = []): 
 const THUMB_INDENT = 2
 const THUMB_RIGHT_MARGIN = 2
 const THUMB_GAP = 2
-const PANE_PAD_X = 2
-const PANE_PAD_Y = 1
+const PANE_PAD_X = 1
+const PANE_PAD_Y = 0
 
 const start = async ($: Engine) => {
   resetSourceCache()
@@ -458,13 +458,13 @@ describe('viewer pane', () => {
     expect(counter(await pane($))).toContain('1 of 3')
   })
 
-  test('the zoom button opens the pane sized from its viewport', async ($, on) => {
+  test('the zoom button opens the pane at the full viewport', async ($, on) => {
     intercept(on, files())
     const ids = opened(on)
     await start($)
     await three($)
     await zoom($, 2)
-    expect(ids.args[0]).toMatchObject({ id: 'gallery', title: '圖片檢視', focus: true, closeOnEscape: true, rows: 32, columns: 70 })
+    expect(ids.args[0]).toMatchObject({ id: 'gallery', title: '圖片檢視', focus: true, closeOnEscape: true, rows: 40, columns: 100 })
   })
 
   test('the title names the position and the file', async ($, on) => {
@@ -475,7 +475,28 @@ describe('viewer pane', () => {
     await zoom($, 2)
     const tree = await pane($)
     expect(counter(tree)).toContain('2 of 3  b.png')
-    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['‹', '›', '✕'])
+    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['‹', '›', '⤢ open', '✕'])
+  })
+
+  test('o opens the shown image in Preview', async ($, on) => {
+    const io = intercept(on, files())
+    opened(on)
+    await start($)
+    await three($)
+    await zoom($, 2)
+    await hotkey($, 'o')
+    expect(io.runs.map(r => r.argv)).toContainEqual(['/usr/bin/open', '-a', 'Preview', '/b.png'])
+  })
+
+  test('a failing open leaves the pane as it was', async ($, on) => {
+    const io = intercept(on, files())
+    opened(on)
+    await start($)
+    await three($)
+    await zoom($, 2)
+    io.fail()
+    await hotkey($, 'o')
+    expect(counter(await pane($))).toContain('2 of 3')
   })
 
   test('✕ (x) closes the pane', async ($, on) => {
@@ -535,7 +556,7 @@ describe('viewer pane', () => {
     await three($)
     await $.command.run({ command: 'gallery', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
     expect(ids).toContain('gallery')
-    expect(ids.args[0]).toMatchObject({ rows: 32, columns: 70 })
+    expect(ids.args[0]).toMatchObject({ rows: 40, columns: 100 })
     expect(counter(await pane($))).toContain('3 of 3')
   })
 

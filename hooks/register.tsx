@@ -17,8 +17,8 @@ const THUMB_MAX_COLUMNS = 40
 const THUMB_INDENT = 2
 const THUMB_RIGHT_MARGIN = 2
 const GAP = 2
-const PANE_PAD_X = 2
-const PANE_PAD_Y = 1
+const PANE_PAD_X = 1
+const PANE_PAD_Y = 0
 const PANE_GAP = 1
 const RUN_TIMEOUT_MS = 5000
 const TITLE_ROWS = 1
@@ -32,8 +32,6 @@ const STRIP_INDENT = 5
 const SINGLE_MAX_COLUMNS = 80
 const SINGLE_MAX_ROWS = 20
 const VIEWER_MIN_ROWS = 12
-const VIEWER_ROW_MARGIN = 8
-const VIEWER_WIDTH = 0.7
 const FALLBACK_VIEWPORT = { columns: 100, rows: 40 }
 const LATEST = -1
 const HOUR_MS = 60 * 60 * 1000
@@ -126,8 +124,9 @@ function basename(path: string): string {
 
 export async function openViewer($: EngineInterface, index: number, viewport: Viewport | undefined): Promise<boolean> {
   try {
-    const columns = Math.round((viewport?.columns ?? FALLBACK_VIEWPORT.columns) * VIEWER_WIDTH)
-    const rows = Math.max(VIEWER_MIN_ROWS, (viewport?.rows ?? FALLBACK_VIEWPORT.rows) - VIEWER_ROW_MARGIN)
+    // The whole terminal: the engine trims both to what its layout can spare.
+    const columns = viewport?.columns ?? FALLBACK_VIEWPORT.columns
+    const rows = Math.max(VIEWER_MIN_ROWS, viewport?.rows ?? FALLBACK_VIEWPORT.rows)
     // Opened before any await, so it counts as answering the press and is placed at any width.
     const placed = $.ui.open({ id: PANE_ID, title: '圖片檢視', focus: true, closeOnEscape: true, rows, columns }).then(
       () => true,
@@ -145,6 +144,11 @@ async function step($: EngineInterface, delta: -1 | 1): Promise<void> {
   try {
     await update($, viewer, v => ({ index: Math.max(0, Math.min(last, (v.index === LATEST ? last : v.index) + delta)) }))
   } catch {}
+}
+
+/** 用 Preview 開原檔，真正的像素縮放交給它。 */
+async function preview($: EngineInterface, path: string): Promise<void> {
+  await run($, ['/usr/bin/open', '-a', 'Preview', path])
 }
 
 async function close($: EngineInterface): Promise<void> {
@@ -359,6 +363,7 @@ export const register: Register = on => {
     if (list.length === 0) return <Text dimColor>還沒有圖片</Text>
     const i = index === LATEST ? list.length - 1 : Math.max(0, Math.min(list.length - 1, index))
     const item = list[i] as Item
+    const original = item.path
     const failure = item.pending ? await convertPending($, item.path, item.id).then(r => ('error' in r ? r.error : null)) : null
     const alive = await $.fs.exists(item.path).catch(() => false)
     const cells = fitCells(
@@ -389,6 +394,7 @@ export const register: Register = on => {
         <Box flexDirection="row" columnGap={2}>
           <Button hotkey="h" onPress={() => void step($, -1)}>‹</Button>
           <Button hotkey="l" onPress={() => void step($, 1)}>›</Button>
+          <Button hotkey="o" onPress={() => void preview($, original)}>⤢ open</Button>
           <Button hotkey="x" onPress={() => void close($)}>✕</Button>
         </Box>
       </Box>
