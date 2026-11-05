@@ -62,6 +62,7 @@ export function intercept(on: On, files: Record<string, FakeFile>, env: Record<s
   const stats: { path: string; resolve: boolean }[] = []
   let exitCode = 0
   let reply: (argv: readonly string[]) => string | undefined = () => undefined
+  let failWhen: (argv: readonly string[]) => boolean = () => false
   const clock = mock.clock(on)
   if (env !== null) mock.env(on, env)
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
@@ -82,12 +83,16 @@ export function intercept(on: On, files: Record<string, FakeFile>, env: Record<s
     if (gate && e.argv.join(' ').includes('base64')) await gate
     if (e.argv[0] === '/usr/bin/find') prunes.push([...e.argv])
     else runs.push({ argv: [...e.argv], stdin: e.init?.stdin })
-    return { value: { exitCode, stdout: reply(e.argv) ?? '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    return { value: { exitCode: failWhen(e.argv) ? 1 : exitCode, stdout: reply(e.argv) ?? '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   return {
     /** Sets what a run prints on stdout, by its argv. */
     respond: (fn: (argv: readonly string[]) => string | undefined) => {
       reply = fn
+    },
+    /** Makes the runs this picks exit 1. */
+    failWhen: (fn: (argv: readonly string[]) => boolean) => {
+      failWhen = fn
     },
     /** Holds the base64 write process.run; the returned function releases it. */
     hold: () => {

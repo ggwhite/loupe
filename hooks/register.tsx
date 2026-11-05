@@ -159,32 +159,62 @@ function basename(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1)
 }
 
-/** The herdr pane this mod zoomed, to zoom back off on close; undefined while it zoomed none. */
-let herdrZoomed: string | undefined
+/** Where the session runs inside herdr: its pane and HOME, read at session.start; undefined outside herdr. */
+let herdrAt: { pane: string; home: string | undefined } | undefined
 
-/** Inside herdr, zooms the session's pane to fill the window, unless it is zoomed already. */
-export async function herdrZoomOn($: EngineInterface): Promise<void> {
-  if (herdrZoomed !== undefined) return
-  const inside = await $.env.get('HERDR_ENV').catch(() => undefined)
-  const pane = await $.env.get('HERDR_PANE_ID').catch(() => undefined)
-  if (inside !== '1' || !pane) return
-  const r = await $.process.run(['herdr', 'pane', 'layout', '--pane', pane], { timeoutMs: RUN_TIMEOUT_MS }).catch(() => null)
-  if (r === null || r.exitCode !== 0) return
-  let zoomed: unknown
-  try {
-    zoomed = (JSON.parse(r.stdout) as { result?: { layout?: { zoomed?: unknown } } }).result?.layout?.zoomed
-  } catch {
-    return
-  }
-  if (zoomed !== false) return
-  if (await run($, ['herdr', 'pane', 'zoom', '--pane', pane, '--on'])) herdrZoomed = pane
+async function readHerdr($: EngineInterface): Promise<void> {
+  const [inside, pane, home] = await Promise.all([
+    $.env.get('HERDR_ENV').catch(() => undefined),
+    $.env.get('HERDR_PANE_ID').catch(() => undefined),
+    $.env.get('HOME').catch(() => undefined),
+  ])
+  herdrAt = inside === '1' && pane ? { pane, home: home || undefined } : undefined
 }
 
-async function herdrZoomOff($: EngineInterface): Promise<void> {
-  const pane = herdrZoomed
-  if (pane === undefined) return
-  herdrZoomed = undefined
-  await run($, ['herdr', 'pane', 'zoom', '--pane', pane, '--off'])
+/** One shell word, single-quoted, for `herdr pane run`. */
+export function shellQuote(word: string): string {
+  return `'${word.replace(/'/g, `'\\''`)}'`
+}
+
+/**
+ * Inside herdr, splits a pane off the session's, zooms it over the whole window and runs
+ * bin/loupe-view in it on every image, at `index`. False, with no pane left behind, when
+ * outside herdr or any step fails, for the caller to fall back to the in-Claude pane.
+ */
+export async function openFullscreen($: EngineInterface, index: number): Promise<boolean> {
+  const at = herdrAt
+  const root = $.plugin.root
+  const list = items()
+  if (at === undefined || !root || list.length === 0) return false
+  try {
+    const i = index === LATEST ? list.length - 1 : Math.max(0, Math.min(list.length - 1, index))
+    const paths = await Promise.all(
+      list.map(item => (item.pending ? convertPending($, item.path, item.id).then(r => ('error' in r ? item.path : r.path)) : item.path)),
+    )
+    const cwd = at.home === undefined ? [] : ['--cwd', at.home]
+    const r = await $.process.run(['herdr', 'pane', 'split', '--pane', at.pane, '--direction', 'right', '--focus', ...cwd], { timeoutMs: RUN_TIMEOUT_MS }).catch(() => null)
+    if (r === null || r.exitCode !== 0) return false
+    let pane: unknown
+    try {
+      pane = (JSON.parse(r.stdout) as { result?: { pane?: { pane_id?: unknown } } }).result?.pane?.pane_id
+    } catch {
+      return false
+    }
+    if (typeof pane !== 'string' || pane === '') return false
+    const line = [shellQuote(`${root}/bin/loupe-view`), String(i + 1), ...paths.map(shellQuote)].join(' ')
+    if ((await run($, ['herdr', 'pane', 'zoom', '--pane', pane, '--on'])) && (await run($, ['herdr', 'pane', 'run', pane, line]))) return true
+    await run($, ['herdr', 'pane', 'close', pane])
+    return false
+  } catch {
+    return false
+  }
+}
+
+/** The full-screen viewer inside herdr, else (or when it fails) the in-Claude pane. */
+function openAny($: EngineInterface, index: number, viewport: Viewport | undefined): void {
+  // Outside herdr the pane opens before any await, so it counts as answering the press.
+  if (herdrAt === undefined) void openViewer($, index, viewport)
+  else void openFullscreen($, index).then(ok => ok || openViewer($, index, viewport))
 }
 
 export async function openViewer($: EngineInterface, index: number, viewport: Viewport | undefined): Promise<boolean> {
@@ -198,9 +228,7 @@ export async function openViewer($: EngineInterface, index: number, viewport: Vi
       () => false,
     )
     await update($, viewer, () => ({ index }))
-    const isPlaced = await placed
-    if (isPlaced) await herdrZoomOn($)
-    return isPlaced
+    return await placed
   } catch {
     return false
   }
@@ -216,11 +244,7 @@ async function step($: EngineInterface, delta: -1 | 1): Promise<void> {
 async function close($: EngineInterface): Promise<void> {
   try {
     await $.ui.close({ id: PANE_ID })
-  } catch {
-    return
-  }
-  // A plugin's own $.ui.close runs only the hooks beneath it, not its own ui.close hook.
-  await herdrZoomOff($)
+  } catch {}
 }
 
 function collect(found: Found[]): { added: Item[]; errors: string[] } {
@@ -258,7 +282,7 @@ function drawRow($: EngineInterface, e: Site, found: Found[], row: RenderElement
           <Box flexDirection="column" height={ROW_THUMB_ROWS} justifyContent="flex-end">
             <Box flexDirection="row" columnGap={ROW_GAP}>
               {added.length > ROW_THUMBS && <Text dimColor>{`+${added.length - ROW_THUMBS}`}</Text>}
-              <Button key={`open-${first.n}`} plain dimColor onPress={() => void openViewer($, first.n - 1, viewport)}>
+              <Button key={`open-${first.n}`} plain dimColor onPress={() => openAny($, first.n - 1, viewport)}>
                 {'⤢ '}
               </Button>
             </Box>
@@ -290,7 +314,7 @@ function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderEl
         {below}
         <Box flexDirection="column" alignItems="flex-start" marginTop={1} paddingLeft={THUMB_INDENT}>
           <Image key={`img-${single.n}`} source={source(single)} {...cells} alt={`[#${single.n} ${basename(single.label)}]`} />
-          <Button key={`zoom-${single.n}`} plain dimColor onPress={() => void openViewer($, single.n - 1, viewport)}>
+          <Button key={`zoom-${single.n}`} plain dimColor onPress={() => openAny($, single.n - 1, viewport)}>
             {`⤢ view #${single.n}`}
           </Button>
         </Box>
@@ -325,7 +349,7 @@ function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderEl
                 rows={t.rows}
                 alt={`[#${t.item.n} ${basename(t.item.label)}]`}
               />
-              <Button key={`zoom-${t.item.n}`} plain dimColor onPress={() => void openViewer($, t.item.n - 1, viewport)}>
+              <Button key={`zoom-${t.item.n}`} plain dimColor onPress={() => openAny($, t.item.n - 1, viewport)}>
                 {`⤢ view #${t.item.n}`}
               </Button>
             </Box>
@@ -377,6 +401,7 @@ const allResolved = (found: Found[]): boolean => found.every(f => !('error' in f
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     void cacheDir($).then(dir => run($, pruneArgv(dir)))
+    await readHerdr($)
     refresh?.cancel()
     try {
       refresh = $.clock.every(HOUR_MS, () => void onWritten($, ['/usr/bin/touch', '-c', '--'], [...written]))
@@ -401,6 +426,7 @@ export const register: Register = on => {
       return { text: count === 0 ? 'no images yet' : `cleared ${count} ${count === 1 ? 'image' : 'images'}` }
     }
     const count = items().length
+    if (await openFullscreen($, LATEST)) return { text: `Loupe: ${count} ${count === 1 ? 'image' : 'images'}, full screen` }
     if (!(await openViewer($, LATEST, { columns: e.presentation.columns }))) return { text: '[could not open the viewer]' }
     return { text: count === 0 ? 'no images yet' : `Loupe: ${count} ${count === 1 ? 'image' : 'images'}` }
   })
@@ -418,13 +444,6 @@ export const register: Register = on => {
       const found = await Promise.all(images.map(async (img, i) => ({ r: await resolveToolImage($, `${e.tool_use_id}-${i}`, img, lazy), label })))
       if (generation === clearing.generation) collect(found)
     } catch {}
-    return r
-  })
-
-  // Escape (closeOnEscape) and any close not made by this mod's own x button.
-  on('ui.close', { id: PANE_ID }, async ($, e, next) => {
-    const r = await next(e)
-    await herdrZoomOff($)
     return r
   })
 
@@ -488,6 +507,11 @@ export const register: Register = on => {
             {wide && (
               <Button hotkey="i" onPress={press('in')}>
                 +
+              </Button>
+            )}
+            {herdrAt !== undefined && (
+              <Button hotkey="f" onPress={() => void openFullscreen($, i)}>
+                ⛶ full
               </Button>
             )}
             <Button hotkey="x" onPress={() => void close($)}>✕</Button>

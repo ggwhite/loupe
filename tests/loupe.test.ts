@@ -3,7 +3,6 @@ import type { Engine } from 'claude-code/testing'
 import { describe, expect, test } from 'claude-code/testing'
 
 import { cropAt, fitCells, nextView } from '../hooks/layout'
-import { herdrZoomOn, register } from '../hooks/register'
 import { resetRegistry } from '../hooks/registry'
 import { resetSourceCache } from '../hooks/source'
 import { ENGINE_ROW, intercept, pngB64 } from './fixtures'
@@ -771,103 +770,155 @@ describe('viewer pane', () => {
     })
   })
 
-  describe('herdr full screen', () => {
+  describe('herdr full-screen viewer', () => {
     const HERDR = { HOME: '/Users/u', TMPDIR: '/tmp/t/', HERDR_ENV: '1', HERDR_PANE_ID: 'w1:p2' }
-    const LAYOUT = ['herdr', 'pane', 'layout', '--pane', 'w1:p2']
-    const ON = ['herdr', 'pane', 'zoom', '--pane', 'w1:p2', '--on']
-    const OFF = ['herdr', 'pane', 'zoom', '--pane', 'w1:p2', '--off']
-    const layout = (zoomed: boolean) => JSON.stringify({ id: 'cli:pane:layout', result: { layout: { zoomed }, type: 'pane_layout' } })
+    const SPLIT = ['herdr', 'pane', 'split', '--pane', 'w1:p2', '--direction', 'right', '--focus', '--cwd', '/Users/u']
+    const ZOOM = ['herdr', 'pane', 'zoom', '--pane', 'w1:p9', '--on']
+    const CLOSE = ['herdr', 'pane', 'close', 'w1:p9']
+    const split = JSON.stringify({ id: 'cli:pane:split', result: { pane: { pane_id: 'w1:p9', tab_id: 'w1:t1' }, type: 'pane_info' } })
 
-    const herdr = (on: On, zoomed: boolean, env: Record<string, string> = HERDR) => {
-      const io = intercept(on, files(), env)
-      io.respond(argv => (argv.join(' ') === LAYOUT.join(' ') ? layout(zoomed) : undefined))
-      on('ui.close', async () => ({ value: undefined }))
-      return { io, calls: () => io.runs.map(r => r.argv).filter(a => a[0] === 'herdr') }
+    /** herdr answering a split with w1:p9; `failing` names the subcommand (split, zoom, run) that exits 1. */
+    const herdr = (on: On, opts: { env?: Record<string, string>; failing?: string; reply?: string; map?: Record<string, { b64: string }> } = {}) => {
+      const io = intercept(on, opts.map ?? files(), opts.env ?? HERDR)
+      const failing = { now: opts.failing }
+      io.respond(argv => (argv[0] === 'herdr' && argv[2] === 'split' ? (opts.reply ?? split) : undefined))
+      io.failWhen(argv => failing.now !== undefined && argv[0] === 'herdr' && argv[2] === failing.now)
+      return { io, heal: () => (failing.now = undefined), calls: () => io.runs.map(r => r.argv).filter(a => a[0] === 'herdr') }
     }
 
-    test('opening the viewer zooms the herdr pane on after checking it', async ($, on) => {
-      const { calls } = herdr(on, false)
-      opened(on)
-      await start($)
-      await three($)
-      await zoom($, 2)
-      expect(calls()).toEqual([LAYOUT, ON])
-    })
+    /** The command line handed to `herdr pane run w1:p9`, with the mod's root taken out. */
+    const ran = (calls: string[][]) => {
+      const run = calls.find(a => a[2] === 'run')
+      expect(run?.slice(0, 4)).toEqual(['herdr', 'pane', 'run', 'w1:p9'])
+      const line = run?.[4] ?? ''
+      const m = /^'(\/[^']*)\/bin\/loupe-view' (.*)$/.exec(line)
+      expect(m).not.toBeNull()
+      return m?.[2] ?? ''
+    }
 
-    test('x zooms the pane back off', async ($, on) => {
-      const { calls } = herdr(on, false)
-      opened(on)
-      await start($)
-      await three($)
-      await zoom($, 2)
-      await hotkey($, 'x')
-      expect(calls()).toEqual([LAYOUT, ON, OFF])
-    })
-
-    test('Escape (a close by the person) zooms the pane back off', async () => {
-      // The test engine raises no ui.close of its own, and a test's import is not the engine's
-      // copy of the module: zoom on through the import, then hand its hook the person's close.
-      const hooks: Record<string, (...a: unknown[]) => Promise<unknown>> = {}
-      register(((event: string, matcher: unknown, hook?: (...a: unknown[]) => Promise<unknown>) => {
-        if (event === 'ui.close') hooks[JSON.stringify(matcher)] = hook ?? (matcher as never)
-      }) as never, {} as never)
-      const ran: string[][] = []
-      const env: Record<string, string> = HERDR
-      const fake = {
-        env: { get: async (name: string) => env[name] },
-        process: {
-          run: async (argv: string[]) => {
-            ran.push(argv)
-            return { exitCode: 0, stdout: argv.join(' ') === LAYOUT.join(' ') ? layout(false) : '', stderr: '' }
-          },
-        },
-      }
-      await herdrZoomOn(fake as never)
-      await hooks[JSON.stringify({ id: 'loupe' })]?.(fake, { id: 'loupe', origin: { kind: 'person' } }, async () => undefined)
-      expect(ran).toEqual([LAYOUT, ON, OFF])
-    })
-
-    test('a pane that was already zoomed is left alone', async ($, on) => {
-      const { calls } = herdr(on, true)
-      opened(on)
-      await start($)
-      await three($)
-      await zoom($, 2)
-      await hotkey($, 'x')
-      expect(calls()).toEqual([LAYOUT])
-    })
-
-    test('opening again while open zooms once and closes once', async ($, on) => {
-      const { calls } = herdr(on, false)
-      opened(on)
-      await start($)
-      await three($)
-      await zoom($, 1)
-      await zoom($, 2)
-      await hotkey($, 'x')
-      expect(calls()).toEqual([LAYOUT, ON, OFF])
-    })
-
-    test('outside herdr nothing runs', async ($, on) => {
-      const { calls } = herdr(on, false, { HOME: '/Users/u', TMPDIR: '/tmp/t/' })
-      opened(on)
-      await start($)
-      await three($)
-      await zoom($, 2)
-      await hotkey($, 'x')
-      expect(calls()).toEqual([])
-    })
-
-    test('a failing herdr query neither zooms nor breaks the viewer', async ($, on) => {
-      const { io, calls } = herdr(on, false)
+    test('⤢ view #2 splits, zooms the new pane and runs loupe-view on every image at 2', async ($, on) => {
+      const { calls } = herdr(on)
       const ids = opened(on)
       await start($)
       await three($)
-      io.fail()
       await zoom($, 2)
-      await hotkey($, 'x')
-      expect(calls()).toEqual([LAYOUT])
+      const all = calls()
+      expect(all.slice(0, 2)).toEqual([SPLIT, ZOOM])
+      expect(all).toHaveLength(3)
+      expect(ran(all)).toBe(`2 '/a.png' '/b.png' '/c.png'`)
+      expect(ids).not.toContain('loupe')
+    })
+
+    test('paths with spaces and quotes reach loupe-view as one word each', async ($, on) => {
+      const { calls } = herdr(on, { map: { "/it's here/x y.png": { b64: pngB64(10, 10) } } })
+      opened(on)
+      await start($)
+      const ui = await $.ui.mount({
+        plugin: 'loupe',
+        surface: 'terminal',
+        component: 'AssistantMessage',
+        requestId: 'msg-q',
+        viewport: { columns: 100, rows: 40 },
+        props: { text: "![x](</it's here/x y.png>)", isFirstOfReply: true },
+      })
+      const button = (await ui.findAll({ type: 'Button' })).find(b => b.props['label'] === '⤢ view #1')
+      await ui.press({ key: button?.key ?? '' })
+      await ui.unmount()
+      expect(ran(calls())).toBe(`1 '/it'\\''s here/x y.png'`)
+    })
+
+    test('/loupe opens the full-screen viewer at the newest image', async ($, on) => {
+      const { calls } = herdr(on)
+      const ids = opened(on)
+      on('command.run', async () => ({}))
+      await start($)
+      await three($)
+      await $.command.run({ command: 'loupe', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
+      expect(ran(calls()).startsWith('3 ')).toBe(true)
+      expect(ids).not.toContain('loupe')
+    })
+
+    test('outside herdr nothing runs and the in-Claude pane opens', async ($, on) => {
+      const { calls } = herdr(on, { env: { HOME: '/Users/u', TMPDIR: '/tmp/t/' } })
+      const ids = opened(on)
+      await start($)
+      await three($)
+      await zoom($, 2)
+      expect(calls()).toEqual([])
       expect(ids).toContain('loupe')
+      expect(counter(await pane($))).toContain('2 of 3')
+    })
+
+    test('a failing split falls back to the in-Claude pane', async ($, on) => {
+      const { calls } = herdr(on, { failing: 'split' })
+      const ids = opened(on)
+      await start($)
+      await three($)
+      await zoom($, 2)
+      expect(calls()).toEqual([SPLIT])
+      expect(ids).toContain('loupe')
+      expect(counter(await pane($))).toContain('2 of 3')
+    })
+
+    test('a split answer without a pane id falls back', async ($, on) => {
+      const { calls } = herdr(on, { reply: 'not json' })
+      const ids = opened(on)
+      await start($)
+      await three($)
+      await zoom($, 2)
+      expect(calls()).toEqual([SPLIT])
+      expect(ids).toContain('loupe')
+    })
+
+    test('a failing zoom closes the pane it split and falls back', async ($, on) => {
+      const { calls } = herdr(on, { failing: 'zoom' })
+      const ids = opened(on)
+      await start($)
+      await three($)
+      await zoom($, 2)
+      expect(calls()).toEqual([SPLIT, ZOOM, CLOSE])
+      expect(ids).toContain('loupe')
+    })
+
+    test('a failing run closes the pane it split and falls back', async ($, on) => {
+      const { calls } = herdr(on, { failing: 'run' })
+      const ids = opened(on)
+      await start($)
+      await three($)
+      await zoom($, 2)
+      const all = calls()
+      expect(all.at(-1)).toEqual(CLOSE)
+      expect(all).toHaveLength(4)
+      expect(ids).toContain('loupe')
+    })
+
+    test('the in-Claude pane has f (⛶ full) opening the full-screen viewer at its image', async ($, on) => {
+      const { calls, heal } = herdr(on, { failing: 'split' })
+      opened(on)
+      await start($)
+      await three($)
+      await zoom($, 2)
+      const tree = await pane($)
+      expect(findAll(tree, 'Button').find(b => b.props?.['hotkey'] === 'f')?.props?.['label']).toBe('⛶ full')
+      await hotkey($, 'l')
+      const before = calls().length
+      heal()
+      await hotkey($, 'f')
+      const after = calls().slice(before)
+      expect(after[0]).toEqual(SPLIT)
+      expect(ran(after)).toBe(`3 '/a.png' '/b.png' '/c.png'`)
+    })
+
+    test('a pending subagent image is converted before loupe-view gets its png', async ($, on) => {
+      const { calls } = herdr(on, { map: new Proxy({}, { has: () => true, get: () => ({}) }) as never })
+      opened(on)
+      on('tool.call', async () => ({ result: { type: 'image', file: { base64: 'AAAA', type: 'image/jpeg' } } as never }))
+      on('command.run', async () => ({}))
+      await start($)
+      await $.tool.call({ tool: 'Read', file_path: '/x.jpg', tool_use_id: 'toolu_sub', agentId: 'agent-1' } as never)
+      await $.command.run({ command: 'loupe', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
+      const words = ran(calls())
+      expect(words).toMatch(/^1 '\/tmp\/t\/claude-loupe\/[^']+\.png'$/)
     })
   })
 })
