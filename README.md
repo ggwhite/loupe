@@ -47,7 +47,7 @@ herdr window, the loupe pane zoomed over everything
 
 
 ─────────────────────────────────────────────────────────────────────────────────────────
-2/5 · 2× · settings-page.png   h/l prev/next  i/o zoom  wasd pan  0 fit  z 2×  q quit
+[‹] [›] [−] [+] [fit] [✕]  2/5 · 2× · settings-page.png   h/l prev/next  i/o zoom  wasd pan
 ```
 
 | Key | Action |
@@ -58,6 +58,22 @@ herdr window, the loupe pane zoomed over everything
 | `0` | Fit the whole image |
 | `w` `a` `s` `d` | Pan up / left / down / right by half of what is visible |
 | `q` or `Esc` | Quit, close the pane |
+
+### Mouse
+
+The viewer turns on the terminal's mouse reporting (SGR, `CSI ? 1000 h`, `1002 h`, `1006 h`) while it runs and turns it off again on every way out.
+
+| Mouse | Action |
+| --- | --- |
+| Wheel up / down | Zoom in / out one level, about the pointer: the image point under it stays where it is |
+| Left drag | Pan: the image follows the pointer (the view follows every 2 cells and settles on release, since each crop takes about 100 ms) |
+| Double-click | Toggle 2× at the clicked point (two presses within 400 ms on the same cell, give or take one) |
+| Click on the left / right tenth of the screen | Previous / next image |
+| Click on a status bar button | `[‹]` `[›]` previous / next, `[−]` `[+]` zoom out / in, `[fit]` fit, `[✕]` quit, the same as their keys |
+
+The right and middle buttons do nothing. When the window is narrow the key hints after the buttons shrink to `h/l i/o wasd 0 z q`, or are left out.
+
+herdr passes mouse events on to a pane whose program asks for them, with its default `mouse_capture = true`, so nothing needs setting. The right button stays herdr's pane menu unless `right_click_passthrough_modifier` is set in herdr's `config.toml`.
 
 If any herdr step fails (or you are not in herdr), loupe opens the Claude Code pane below instead. In that pane, inside herdr, `f` (`⛶ full`) tries the full-screen viewer again at the image you are on.
 
@@ -128,7 +144,7 @@ The title line shows where you are: `2 of 5 · 2× · settings-page.png`.
 
 - **Pane width.** Docked beside a fullscreen transcript, a Claude Code pane is capped at 45% of the terminal's columns. Inside herdr the full-screen viewer avoids the cap; elsewhere it applies.
 - **Full-screen viewer.** It needs herdr for the pane it opens, and a terminal that reads kitty images from a file path (`t=f`), so a remote session whose files are on another machine cannot use it. It shows the images loupe had when it opened; images that arrive later need another open.
-- **No mouse zoom.** There is no scroll-wheel zoom or drag-to-pan; use the keys and buttons.
+- **No mouse zoom in the Claude Code pane.** There the wheel and drags do nothing; use the keys and buttons. The full-screen viewer in herdr has [mouse](#mouse) zoom and pan.
 - **No `=` / `-` keys.** Claude Code hotkeys are single letters or digits, so zooming one level at a time is on `i` and `o` (the `+` and `−` buttons). In a pane narrower than 40 columns the buttons are left out and `i: in` / `o: out` join the key line instead.
 - **Very large files.** A PNG too large for Claude Code's file read cap still shows, but at fit only, since loupe cannot read its size.
 - **Zoom depth.** The deepest level is the one that still has at least one image pixel per terminal cell, so small images may not zoom at all.
