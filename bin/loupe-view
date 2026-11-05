@@ -139,6 +139,117 @@ next_view() {
 	CY2=$((2 * CROP_Y + CROP_H))
 }
 
+# R = floor(a / b) for any a, b > 0 (bash's / cuts toward zero).
+fdiv() {
+	if (($1 >= 0)); then
+		R=$(($1 / $2))
+	else
+		R=$((-((-$1 + $2 - 1) / $2)))
+	fi
+}
+
+# view_geom w h boxcols boxrows, over LEVEL CX2 CY2 -> LV MAXZ, the pixels shown (VIEW_X VIEW_Y
+# VIEW_W VIEW_H), and the cells they are drawn in (from IMG_C, IMG_R, FIT_C by FIT_R), as draw has them.
+view_geom() {
+	local w=$1 h=$2 c=$3 r=$4 l
+	max_zoom "$w" "$h" "$c" "$r"
+	LV=1
+	for l in $LEVELS; do ((l <= LEVEL && l <= MAXZ)) && LV=$l; done
+	VIEW_X=0 VIEW_Y=0 VIEW_W=$w VIEW_H=$h
+	if ((LV > 1)); then
+		crop_at "$w" "$h" "$c" "$r" "$LV" "$CX2" "$CY2"
+		VIEW_X=$CROP_X VIEW_Y=$CROP_Y VIEW_W=$CROP_W VIEW_H=$CROP_H
+	fi
+	fit_cells "$VIEW_W" "$VIEW_H" "$c" "$r"
+	IMG_C=$(((c - FIT_C) / 2 + 1))
+	IMG_R=$(((r - FIT_R) / 2 + 1))
+}
+
+# zoom_at w h boxcols boxrows key col row, over LEVEL CX2 CY2 (key: in out toggle): zooms like the
+# keys, but keeps the image point under the cell col,row (counting from 1) on that cell.
+zoom_at() {
+	local w=$1 h=$2 c=$3 r=$4 key=$5 col=$6 row=$7 old=$LEVEL lv vx vy vw vh fc fr ic ir nl a b
+	view_geom "$w" "$h" "$c" "$r"
+	lv=$LV vx=$VIEW_X vy=$VIEW_Y vw=$VIEW_W vh=$VIEW_H fc=$FIT_C fr=$FIT_R ic=$IMG_C ir=$IMG_R
+	next_view "$w" "$h" "$c" "$r" "$key"
+	nl=$LEVEL
+	if ((nl == lv || nl > MAXZ)); then
+		LEVEL=$old
+		return
+	fi
+	if ((nl <= 1)); then
+		LEVEL=1 CX2=$w CY2=$h
+		return
+	fi
+	# The new crop's size and cells, then its corner: the point less the pointer's share of the crop.
+	crop_at "$w" "$h" "$c" "$r" "$nl" "$w" "$h"
+	fit_cells "$CROP_W" "$CROP_H" "$c" "$r"
+	clamp "$col" "$ic" $((ic + fc - 1))
+	a=$((2 * (R - ic) + 1))
+	clamp "$col" $(((c - FIT_C) / 2 + 1)) $(((c - FIT_C) / 2 + FIT_C))
+	b=$((2 * (R - (c - FIT_C) / 2 - 1) + 1))
+	fdiv $((2 * vx * fc * FIT_C + a * vw * FIT_C - b * CROP_W * fc + fc * FIT_C)) $((2 * fc * FIT_C))
+	CX2=$((2 * R + CROP_W))
+	clamp "$row" "$ir" $((ir + fr - 1))
+	a=$((2 * (R - ir) + 1))
+	clamp "$row" $(((r - FIT_R) / 2 + 1)) $(((r - FIT_R) / 2 + FIT_R))
+	b=$((2 * (R - (r - FIT_R) / 2 - 1) + 1))
+	fdiv $((2 * vy * fr * FIT_R + a * vh * FIT_R - b * CROP_H * fr + fr * FIT_R)) $((2 * fr * FIT_R))
+	CY2=$((2 * R + CROP_H))
+	crop_at "$w" "$h" "$c" "$r" "$nl" "$CX2" "$CY2"
+	LEVEL=$nl
+	CX2=$((2 * CROP_X + CROP_W))
+	CY2=$((2 * CROP_Y + CROP_H))
+}
+
+# drag_view w h boxcols boxrows dcols drows, over LEVEL CX2 CY2: moves the view so the image
+# follows a drag of dcols by drows cells (at fit there is nothing to move).
+drag_view() {
+	local w=$1 h=$2 c=$3 r=$4 dc=$5 dr=$6 x
+	view_geom "$w" "$h" "$c" "$r"
+	((LV <= 1)) && return
+	fdiv $((2 * (VIEW_X * FIT_C - dc * VIEW_W) + FIT_C)) $((2 * FIT_C))
+	x=$R
+	fdiv $((2 * (VIEW_Y * FIT_R - dr * VIEW_H) + FIT_R)) $((2 * FIT_R))
+	crop_at "$w" "$h" "$c" "$r" "$LV" $((2 * x + VIEW_W)) $((2 * R + VIEW_H))
+	LEVEL=$LV
+	CX2=$((2 * CROP_X + CROP_W))
+	CY2=$((2 * CROP_Y + CROP_H))
+}
+
+# The status bar starts with these buttons, each drawn as [label] and a space: name:label width in columns.
+BTN_LIST="prev:1 next:1 out:1 in:1 fit:3 quit:1"
+
+# button_at col -> BTN: the button under column col of the status bar, or empty.
+button_at() {
+	local col=$1 x=1 b w
+	BTN=''
+	for b in $BTN_LIST; do
+		w=${b#*:}
+		if ((col >= x && col <= x + w + 1)); then
+			BTN=${b%:*}
+			return
+		fi
+		x=$((x + w + 3))
+	done
+}
+
+# edge_at col boxcols -> EDGE: prev or next on the left or right tenth of the box, else empty.
+edge_at() {
+	local col=$1 c=$2 e=$(($2 / 10))
+	((e < 1)) && e=1
+	EDGE=''
+	((col <= e)) && EDGE=prev
+	((col > c - e)) && EDGE=next
+	:
+}
+
+# double_click t1 col1 row1 t2 col2 row2 (milliseconds; t1 0 is no first click): true for two
+# presses within 400ms on the same cell, give or take one.
+double_click() {
+	(($1 > 0 && $4 - $1 <= 400 && $5 - $2 <= 1 && $2 - $5 <= 1 && $6 - $3 <= 1 && $3 - $6 <= 1))
+}
+
 self_test() {
 	local fails=0
 	check() {
@@ -196,6 +307,91 @@ toggle 1 1600 1000
 toggle 2 1600 1000
 fit 1 1600 1000
 right 1 1600 1000
+EOF
+	# zoom about the pointer: the level, centre and pointer cell before, then the new view
+	while read -r l cx2 cy2 key col row want; do
+		LEVEL=$l CX2=$cx2 CY2=$cy2
+		zoom_at 1600 1000 78 25 "$key" "$col" "$row"
+		check "zoom_at $l $cx2 $cy2 $key $col $row" "$LEVEL $CX2 $CY2" "$want"
+	done <<'EOF'
+1 1600 1000 in 1 1 2 810 535
+1 1600 1000 in 40 13 2 1610 1041
+1 1600 1000 in 70 20 2 2226 1337
+2 1600 1000 in 70 20 3 1809 1096
+2 1600 1000 out 70 20 1 1600 1000
+2 812 514 out 1 1 1 1600 1000
+1 1600 1000 toggle 20 6 2 1200 745
+2 2400 1487 toggle 20 6 1 1600 1000
+8 1600 1000 in 10 10 8 1600 1000
+1 1600 1000 out 10 10 1 1600 1000
+1 1600 1000 in 100 30 2 2390 1465
+EOF
+	LEVEL=1 CX2=100 CY2=100
+	zoom_at 100 100 78 25 in 40 12
+	check "zoom_at small" "$LEVEL $CX2 $CY2" "2 102 96"
+	# drag by cells: the image follows the pointer
+	while read -r l cx2 cy2 dc dr want; do
+		LEVEL=$l CX2=$cx2 CY2=$cy2
+		drag_view 1600 1000 78 25 "$dc" "$dr"
+		check "drag $l $cx2 $cy2 $dc $dr" "$LEVEL $CX2 $CY2" "$want"
+	done <<'EOF'
+2 1600 1000 10 0 2 1394 1001
+2 1600 1000 -10 -4 2 1806 1165
+2 1600 1000 100 0 2 800 1001
+2 1600 1000 0 -30 2 1600 1487
+1 1600 1000 10 5 1 1600 1000
+4 1600 1000 3 2 4 1570 960
+EOF
+	# the status bar buttons: [‹] [›] [−] [+] [fit] [✕]
+	while read -r col want; do
+		button_at "$col"
+		check "button $col" "${BTN:--}" "$want"
+	done <<'EOF'
+0 -
+1 prev
+3 prev
+4 -
+5 next
+7 next
+9 out
+11 out
+13 in
+15 in
+16 -
+17 fit
+21 fit
+22 -
+23 quit
+25 quit
+26 -
+60 -
+EOF
+	while read -r col cols want; do
+		edge_at "$col" "$cols"
+		check "edge $col $cols" "${EDGE:--}" "$want"
+	done <<'EOF'
+1 78 prev
+7 78 prev
+8 78 -
+40 78 -
+71 78 -
+72 78 next
+78 78 next
+1 5 prev
+3 5 -
+5 5 next
+EOF
+	while read -r t1 c1 r1 t2 c2 r2 want; do
+		want_double=no
+		double_click "$t1" "$c1" "$r1" "$t2" "$c2" "$r2" && want_double=yes
+		check "double $t1 $c1 $r1 $t2 $c2 $r2" "$want_double" "$want"
+	done <<'EOF'
+1000 10 5 1300 11 5 yes
+1000 10 5 1400 10 4 yes
+1000 10 5 1401 10 5 no
+1000 10 5 1100 12 5 no
+1000 10 5 1100 10 7 no
+0 10 5 100 10 5 no
 EOF
 	if ((fails > 0)); then
 		echo "self-test: $fails failed"
