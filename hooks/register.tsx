@@ -24,8 +24,12 @@ const RUN_TIMEOUT_MS = 5000
 const TITLE_ROWS = 1
 const BUTTON_ROWS = 1
 const HINT_ROWS = 1
-// Narrower than this, the viewer leaves out its − and + buttons.
+// Narrower than this, the viewer leaves out its − and + buttons and their keys join the hint line.
 const ZOOM_BUTTONS_MIN_COLUMNS = 40
+const ZOOM_HINTS: [hotkey: string, label: string, key: ViewKey][] = [
+  ['i', 'in', 'in'],
+  ['o', 'out', 'out'],
+]
 // The key hint under the buttons: each a plain Button, since a hotkey needs one drawn.
 const HINTS: [hotkey: string, label: string, key: ViewKey][] = [
   ['0', 'fit', 'fit'],
@@ -446,6 +450,7 @@ export const register: Register = on => {
     const shown: Resolved =
       failure === null && alive && crop ? await cropTo($, item, crop) : { path: item.path, size: item.size, generation: item.generation }
     const cells = fitCells('error' in shown ? null : shown.size, box.columns, box.rows)
+    const wide = e.props.bodyColumns >= ZOOM_BUTTONS_MIN_COLUMNS
     const press = (key: ViewKey) => () => {
       if (!size || !view) return
       void update($, viewer, v => ({ ...v, zoom: { id: item.id, ...nextView(size, box, v.zoom?.id === item.id ? v.zoom : view, key) } })).catch(() => undefined)
@@ -475,12 +480,20 @@ export const register: Register = on => {
           <Box flexDirection="row" columnGap={2}>
             <Button hotkey="h" onPress={() => void step($, -1)}>‹</Button>
             <Button hotkey="l" onPress={() => void step($, 1)}>›</Button>
-            {e.props.bodyColumns >= ZOOM_BUTTONS_MIN_COLUMNS && <Button onPress={press('out')}>−</Button>}
-            {e.props.bodyColumns >= ZOOM_BUTTONS_MIN_COLUMNS && <Button onPress={press('in')}>+</Button>}
+            {wide && (
+              <Button hotkey="o" onPress={press('out')}>
+                −
+              </Button>
+            )}
+            {wide && (
+              <Button hotkey="i" onPress={press('in')}>
+                +
+              </Button>
+            )}
             <Button hotkey="x" onPress={() => void close($)}>✕</Button>
           </Box>
           <Box flexDirection="row" columnGap={1}>
-            {HINTS.map(([hotkey, label, key]) => (
+            {(wide ? HINTS : [...ZOOM_HINTS, ...HINTS]).map(([hotkey, label, key]) => (
               <Button key={`hint-${hotkey}`} plain dimColor hotkey={hotkey} onPress={press(key)}>
                 {label}
               </Button>

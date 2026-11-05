@@ -744,6 +744,30 @@ describe('viewer pane', () => {
       const labels = findAll(tree, 'Button').map(labelOf)
       expect(labels).not.toContain('+')
       expect(labels).toEqual(expect.arrayContaining(['fit', '2×', '↑', '←', '↓', '→']))
+      // The zoom keys move to the hint line, so i and o still work.
+      const hotkeys = findAll(tree, 'Button').map(b => b.props?.['hotkey'])
+      expect(hotkeys).toEqual(expect.arrayContaining(['i', 'o']))
+      expect(hotkeys.filter(k => k === 'i' || k === 'o')).toHaveLength(2)
+    })
+
+    test('i and o zoom in and out a level', async ($, on) => {
+      await at2($, on)
+      await hotkey($, 'i')
+      await hotkey($, 'i')
+      expect(counter(await pane($))).toContain('2 of 3 · 3× · b.png')
+      await hotkey($, 'o')
+      expect(counter(await pane($))).toContain('2 of 3 · 2× · b.png')
+      await hotkey($, 'o')
+      await hotkey($, 'o')
+      expect(counter(await pane($))).toContain('2 of 3 · 1× · b.png')
+    })
+
+    test('i and o are the + and − buttons themselves, not extra ones', async ($, on) => {
+      await at2($, on)
+      const buttons = findAll(await pane($), 'Button')
+      expect(buttons.find(b => labelOf(b) === '+')?.props?.['hotkey']).toBe('i')
+      expect(buttons.find(b => labelOf(b) === '−')?.props?.['hotkey']).toBe('o')
+      expect(buttons.filter(b => b.props?.['hotkey'] === 'i' || b.props?.['hotkey'] === 'o')).toHaveLength(2)
     })
   })
 

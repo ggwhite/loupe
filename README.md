@@ -43,7 +43,7 @@ The keys work while the viewer has the focus (it takes it when it opens).
 | `h` / `l` | Previous / next image (the zoom resets) |
 | `z` | Toggle 2× at the centre of the image |
 | `0` | Fit the whole image |
-| `−` / `+` buttons | Zoom out / in one level (1×, 2×, 3×, 4×, 6×, 8×) |
+| `i` / `o` | Zoom in / out one level (1×, 2×, 3×, 4×, 6×, 8×); also the `+` / `−` buttons |
 | `w` `a` `s` `d` | Pan up / left / down / right by half of what is visible |
 | `x` or `Esc` | Close the viewer |
 
@@ -97,7 +97,7 @@ The title line shows where you are: `2 of 5 · 2× · settings-page.png`.
 
 - **Pane width.** Docked beside a fullscreen transcript, a Claude Code pane is capped at 45% of the terminal's columns. herdr's zoom gives the whole session more room, but the cap still applies to the dock.
 - **No mouse zoom.** There is no scroll-wheel zoom or drag-to-pan; use the keys and buttons.
-- **No `=` / `-` keys.** Claude Code hotkeys are single letters or digits, so zooming one level at a time is done with the `−` / `+` buttons; the buttons are left out when the pane is narrower than 40 columns.
+- **No `=` / `-` keys.** Claude Code hotkeys are single letters or digits, so zooming one level at a time is on `i` and `o` (the `+` and `−` buttons). In a pane narrower than 40 columns the buttons are left out and `i: in` / `o: out` join the key line instead.
 - **Very large files.** A PNG too large for Claude Code's file read cap still shows, but at fit only, since loupe cannot read its size.
 - **Zoom depth.** The deepest level is the one that still has at least one image pixel per terminal cell, so small images may not zoom at all.
 
