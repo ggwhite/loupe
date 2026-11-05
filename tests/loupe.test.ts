@@ -475,28 +475,7 @@ describe('viewer pane', () => {
     await zoom($, 2)
     const tree = await pane($)
     expect(counter(tree)).toContain('2 of 3  b.png')
-    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['‹', '›', '⤢ open', '✕'])
-  })
-
-  test('o opens the shown image in Preview', async ($, on) => {
-    const io = intercept(on, files())
-    opened(on)
-    await start($)
-    await three($)
-    await zoom($, 2)
-    await hotkey($, 'o')
-    expect(io.runs.map(r => r.argv)).toContainEqual(['/usr/bin/open', '-a', 'Preview', '/b.png'])
-  })
-
-  test('a failing open leaves the pane as it was', async ($, on) => {
-    const io = intercept(on, files())
-    opened(on)
-    await start($)
-    await three($)
-    await zoom($, 2)
-    io.fail()
-    await hotkey($, 'o')
-    expect(counter(await pane($))).toContain('2 of 3')
+    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['‹', '›', '✕'])
   })
 
   test('✕ (x) closes the pane', async ($, on) => {

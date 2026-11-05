@@ -146,11 +146,6 @@ async function step($: EngineInterface, delta: -1 | 1): Promise<void> {
   } catch {}
 }
 
-/** Opens the original file in Preview, which does the real pixel zoom. */
-async function preview($: EngineInterface, path: string): Promise<void> {
-  await run($, ['/usr/bin/open', '-a', 'Preview', path])
-}
-
 async function close($: EngineInterface): Promise<void> {
   try {
     await $.ui.close({ id: PANE_ID })
@@ -363,7 +358,6 @@ export const register: Register = on => {
     if (list.length === 0) return <Text dimColor>no images yet</Text>
     const i = index === LATEST ? list.length - 1 : Math.max(0, Math.min(list.length - 1, index))
     const item = list[i] as Item
-    const original = item.path
     const failure = item.pending ? await convertPending($, item.path, item.id).then(r => ('error' in r ? r.error : null)) : null
     const alive = await $.fs.exists(item.path).catch(() => false)
     const cells = fitCells(
@@ -394,7 +388,6 @@ export const register: Register = on => {
         <Box flexDirection="row" columnGap={2}>
           <Button hotkey="h" onPress={() => void step($, -1)}>‹</Button>
           <Button hotkey="l" onPress={() => void step($, 1)}>›</Button>
-          <Button hotkey="o" onPress={() => void preview($, original)}>⤢ open</Button>
           <Button hotkey="x" onPress={() => void close($)}>✕</Button>
         </Box>
       </Box>

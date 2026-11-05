@@ -255,22 +255,6 @@ describe('lazy conversion for subagent images', () => {
     expect(JSON.stringify(await $.ui.render(PANE as never))).toContain('"type":"Image"')
   })
 
-  test('o on a pending image opens its raw file in Preview', async ($, on) => {
-    const io = intercept(on, anyFile)
-    on('tool.call', async () => ({ result: JPEG as never }))
-    await start($)
-    await $.tool.call({ tool: 'Read', file_path: '/x.jpg', tool_use_id: 'toolu_sub4', agentId: 'agent-1' } as never)
-    const raw = io.runs[0]?.argv.at(-1) ?? ''
-    expect(raw).toMatch(/\/toolu_sub4-0\.jpg$/)
-    io.fail()
-    const ui = await $.ui.mount(PANE)
-    const button = (await ui.findAll({ type: 'Button' })).find(b => b.props['hotkey'] === 'o')
-    expect(button?.key).toBeDefined()
-    await ui.press({ key: button?.key ?? '' })
-    await ui.unmount()
-    expect(io.runs.map(r => r.argv)).toContainEqual(['/usr/bin/open', '-a', 'Preview', raw])
-  })
-
   test('a subagent png needs no conversion at all', async ($, on) => {
     const { runs } = intercept(on, anyFile)
     on('tool.call', async () => ({ result: IMAGE as never }))
