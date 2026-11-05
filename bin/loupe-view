@@ -1,0 +1,415 @@
+#!/bin/bash
+# loupe-view: shows images over the whole terminal with the kitty graphics protocol,
+# with zoom and pan. Written for herdr on macOS; needs only sips, base64 and stty.
+#
+#   loupe-view <n> <file> [file ...]   open on the n-th file (counting from 1)
+#   loupe-view --self-test             check the fit and crop math against hooks/layout.ts
+#
+# Keys: h/l prev/next, i/o zoom in/out, z 2x at the centre, 0 fit, w/a/s/d pan, q or Esc quit.
+# A zoom is a crop made with sips into $TMPDIR/claude-loupe/view/, the same crop the
+# in-Claude viewer makes (hooks/layout.ts): the box's shape at level times the fit scale.
+
+set -u
+
+LEVELS="1 2 3 4 6 8"
+# A cell's width and height: real pixels when the terminal answers CSI 16 t, else 1:2.
+CW=1
+CH=2
+
+# --- math (integers; centres are kept doubled so a half pixel stays exact) ---------
+
+# R = round(a / b) for a >= 0, b > 0, halves up like Math.round.
+rdiv() { R=$(((2 * $1 + $2) / (2 * $2))); }
+
+# clamp n lo hi -> R
+clamp() {
+	R=$1
+	((R < $2)) && R=$2
+	((R > $3)) && R=$3
+	:
+}
+
+# fit_cells w h maxcols maxrows -> FIT_C FIT_R: the largest box of cells that keeps the shape.
+fit_cells() {
+	local w=$1 h=$2 maxc=$3 maxr=$4 c r
+	((maxc < 1)) && maxc=1
+	((maxr < 1)) && maxr=1
+	r=$maxr
+	rdiv $((r * w * CH)) $((h * CW))
+	c=$R
+	if ((c > maxc)); then
+		c=$maxc
+		rdiv $((c * h * CW)) $((w * CH))
+		r=$R
+	fi
+	clamp "$c" 1 "$maxc"
+	FIT_C=$R
+	clamp "$r" 1 "$maxr"
+	FIT_R=$R
+}
+
+# crop_at w h boxcols boxrows level cx2 cy2 -> CROP_X CROP_Y CROP_W CROP_H
+crop_at() {
+	local w=$1 h=$2 bw=$(($3 * CW)) bh=$(($4 * CH)) level=$5 cx2=$6 cy2=$7 cw ch n
+	((bw < CW)) && bw=$CW
+	((bh < CH)) && bh=$CH
+	if ((bw * h <= bh * w)); then
+		rdiv "$w" "$level"
+		cw=$R
+		rdiv $((bh * w)) $((bw * level))
+		ch=$R
+	else
+		rdiv $((bw * h)) $((bh * level))
+		cw=$R
+		rdiv "$h" "$level"
+		ch=$R
+	fi
+	clamp "$cw" 1 "$w"
+	CROP_W=$R
+	clamp "$ch" 1 "$h"
+	CROP_H=$R
+	# round(cx - width / 2), kept inside the image
+	n=$((cx2 - CROP_W + 1))
+	((n < 0)) && n=0
+	clamp $((n / 2)) 0 $((w - CROP_W))
+	CROP_X=$R
+	n=$((cy2 - CROP_H + 1))
+	((n < 0)) && n=0
+	clamp $((n / 2)) 0 $((h - CROP_H))
+	CROP_Y=$R
+}
+
+# max_zoom w h boxcols boxrows -> MAXZ: the deepest level with a pixel per cell across and down.
+max_zoom() {
+	local w=$1 h=$2 c=$3 r=$4 l mw mh
+	mw=$((w < c ? w : c))
+	mh=$((h < r ? h : r))
+	MAXZ=1
+	for l in $LEVELS; do
+		crop_at "$w" "$h" "$c" "$r" "$l" "$w" "$h"
+		((CROP_W < mw || CROP_H < mh)) && break
+		MAXZ=$l
+	done
+}
+
+# next_view w h boxcols boxrows key, over LEVEL CX2 CY2 (key: in out fit toggle up down left right).
+next_view() {
+	local w=$1 h=$2 c=$3 r=$4 key=$5 lv=1 l cap dx=0 dy=0
+	max_zoom "$w" "$h" "$c" "$r"
+	cap=$((LEVEL < MAXZ ? LEVEL : MAXZ))
+	for l in $LEVELS; do ((l <= cap)) && lv=$l; done
+	case $key in
+	fit)
+		LEVEL=1 CX2=$w CY2=$h
+		return
+		;;
+	toggle)
+		if ((lv > 1)); then
+			LEVEL=1 CX2=$w CY2=$h
+		elif ((MAXZ >= 2)); then
+			LEVEL=2 CX2=$w CY2=$h
+		fi
+		return
+		;;
+	in)
+		LEVEL=$lv
+		for l in $LEVELS; do
+			if ((l > lv && l <= MAXZ)); then
+				LEVEL=$l
+				break
+			fi
+		done
+		return
+		;;
+	out)
+		LEVEL=1
+		for l in $LEVELS; do ((l < lv)) && LEVEL=$l; done
+		return
+		;;
+	left) dx=-1 ;;
+	right) dx=1 ;;
+	up) dy=-1 ;;
+	down) dy=1 ;;
+	esac
+	((lv <= 1)) && return
+	crop_at "$w" "$h" "$c" "$r" "$lv" "$CX2" "$CY2"
+	crop_at "$w" "$h" "$c" "$r" "$lv" $((2 * CROP_X + CROP_W + dx * CROP_W)) $((2 * CROP_Y + CROP_H + dy * CROP_H))
+	LEVEL=$lv
+	CX2=$((2 * CROP_X + CROP_W))
+	CY2=$((2 * CROP_Y + CROP_H))
+}
+
+self_test() {
+	local fails=0
+	check() {
+		if [[ "$2" == "$3" ]]; then
+			return
+		fi
+		echo "FAIL $1: want '$3' got '$2'"
+		fails=$((fails + 1))
+	}
+	CW=1 CH=2
+	while read -r w h c r want; do
+		fit_cells "$w" "$h" "$c" "$r"
+		check "fit $w $h $c $r" "${FIT_C-} ${FIT_R-}" "$want"
+	done <<'EOF'
+1600 1000 78 25 78 24
+640 480 200 50 133 50
+100 100 80 30 60 30
+2600 400 120 40 120 9
+300 3000 200 60 12 60
+EOF
+	while read -r w h c r l cx2 cy2 x y cw ch; do
+		crop_at "$w" "$h" "$c" "$r" "$l" "$cx2" "$cy2"
+		check "crop $w $h $c $r $l $cx2 $cy2" "${CROP_X-} ${CROP_Y-} ${CROP_W-} ${CROP_H-}" "$x $y $cw $ch"
+	done <<'EOF'
+1600 1000 78 25 2 1600 1000 400 244 800 513
+1600 1000 78 25 3 200 200 0 0 533 342
+640 480 200 50 4 1200 800 400 340 240 120
+2600 400 120 40 2 2600 400 650 0 1300 400
+1601 999 90 30 6 0 1998 0 821 267 178
+EOF
+	while read -r w h c r want; do
+		max_zoom "$w" "$h" "$c" "$r"
+		check "max $w $h $c $r" "$MAXZ" "$want"
+	done <<'EOF'
+100 100 78 25 2
+1600 1000 78 25 8
+640 480 200 50 4
+3000 2000 150 45 8
+EOF
+	LEVEL=1 CX2=1600 CY2=1000
+	while read -r key want; do
+		next_view 1600 1000 78 25 "$key"
+		check "view $key" "$LEVEL $CX2 $CY2" "$want"
+	done <<'EOF'
+in 2 1600 1000
+right 2 2400 1001
+right 2 2400 1001
+right 2 2400 1001
+down 2 2400 1487
+in 3 2400 1487
+left 3 1869 1488
+out 2 1869 1488
+up 2 1870 975
+toggle 1 1600 1000
+toggle 2 1600 1000
+fit 1 1600 1000
+right 1 1600 1000
+EOF
+	if ((fails > 0)); then
+		echo "self-test: $fails failed"
+		return 1
+	fi
+	echo "self-test: ok"
+}
+
+if [[ "${1-}" == "--self-test" ]]; then
+	self_test
+	exit
+fi
+
+# --- the viewer ---------------------------------------------------------------------
+
+usage() {
+	echo "usage: loupe-view <n> <file> [file ...]   (n counts from 1)" >&2
+	echo "       loupe-view --self-test" >&2
+	exit 2
+}
+
+(($# >= 2)) || usage
+[[ $1 =~ ^[0-9]+$ ]] || usage
+INDEX=$(($1 - 1))
+shift
+FILES=()
+for f in "$@"; do
+	[[ $f == /* ]] || f="$PWD/$f"
+	FILES+=("$f")
+done
+COUNT=${#FILES[@]}
+clamp "$INDEX" 0 $((COUNT - 1))
+INDEX=$R
+
+CACHE="${TMPDIR:-/tmp}"
+CACHE="${CACHE%/}/claude-loupe/view"
+mkdir -p "$CACHE" 2>/dev/null
+
+# Fractional read timeouts need bash 4; macOS's /bin/bash 3.2 waits whole seconds.
+if ((BASH_VERSINFO[0] >= 4)); then SHORT=0.05 TICK=0.5; else SHORT=1 TICK=1; fi
+
+# Per image, loaded on first view: its png, width, height, or why it can't be shown.
+PNG=() IMG_W=() IMG_H=() ERR=()
+
+# KEY = a short cache name for the text in $1.
+cache_key() {
+	local sum _
+	read -r sum _ < <(printf '%s' "$1" | cksum)
+	KEY=$sum
+}
+
+load() {
+	local i=$1 f=${FILES[$1]} line fmt='' w='' h='' mtime
+	[[ -n "${IMG_W[$i]-}${ERR[$i]-}" ]] && return
+	if [[ ! -f $f ]]; then
+		ERR[i]="file not found"
+		return
+	fi
+	while read -r line; do
+		case $line in
+		format:*) fmt=${line#format: } ;;
+		pixelWidth:*) w=${line#pixelWidth: } ;;
+		pixelHeight:*) h=${line#pixelHeight: } ;;
+		esac
+	done < <(sips -g format -g pixelWidth -g pixelHeight "$f" 2>/dev/null)
+	if [[ ! $w =~ ^[0-9]+$ || ! $h =~ ^[0-9]+$ || $w -eq 0 || $h -eq 0 ]]; then
+		ERR[i]="not an image sips can read"
+		return
+	fi
+	PNG[i]=$f
+	if [[ $fmt != png ]]; then
+		mtime=$(stat -f %m "$f" 2>/dev/null)
+		cache_key "conv|$f|$mtime"
+		PNG[i]="$CACHE/conv-$KEY.png"
+		if [[ ! -s ${PNG[$i]} ]] && ! sips -s format png "$f" --out "${PNG[$i]}" >/dev/null 2>&1; then
+			ERR[i]="conversion failed"
+			return
+		fi
+	fi
+	IMG_W[i]=$w
+	IMG_H[i]=$h
+}
+
+reset_view() {
+	load "$INDEX"
+	LEVEL=1
+	CX2=${IMG_W[$INDEX]-0}
+	CY2=${IMG_H[$INDEX]-0}
+}
+
+# Asks the terminal for its cell size in pixels (CSI 16 t -> CSI 6 ; h ; w t); keeps 1:2 without an answer.
+cell_size() {
+	local h w
+	printf '\e[16t' >/dev/tty
+	IFS=";" read -rs -d t -t "$SHORT" _ h w </dev/tty || return
+	[[ $h =~ ^[0-9]+$ && $w =~ ^[0-9]+$ ]] && ((h > 0 && w > 0)) && CH=$h CW=$w
+}
+
+# TERM_ROWS TERM_COLS = the terminal's size, asked of the tty itself (a $(tput cols) has a pipe for stdout).
+term_size() {
+	TERM_ROWS=24 TERM_COLS=80
+	read -r TERM_ROWS TERM_COLS < <(stty size </dev/tty 2>/dev/null)
+	[[ $TERM_ROWS =~ ^[0-9]+$ && $TERM_COLS =~ ^[0-9]+$ ]] || TERM_ROWS=24 TERM_COLS=80
+}
+
+box() {
+	term_size
+	COLS=$TERM_COLS
+	ROWS=$TERM_ROWS
+	BOXC=$COLS
+	BOXR=$((ROWS - 1))
+	((BOXR < 1)) && BOXR=1
+}
+
+draw() {
+	local w h shown sw sh lv l mtime status hint name
+	box
+	load "$INDEX"
+	# The previous image goes first, then the screen.
+	printf '\e_Ga=d,d=A,q=2\e\\\e[2J'
+	name=${FILES[$INDEX]##*/}
+	lv=1
+	if [[ -n ${ERR[$INDEX]-} ]]; then
+		status="[${ERR[$INDEX]}]"
+		printf '\e[%d;%dH%s' $((BOXR / 2 + 1)) 1 "$status"
+	else
+		w=${IMG_W[$INDEX]} h=${IMG_H[$INDEX]}
+		max_zoom "$w" "$h" "$BOXC" "$BOXR"
+		for l in $LEVELS; do ((l <= LEVEL && l <= MAXZ)) && lv=$l; done
+		shown=${PNG[$INDEX]} sw=$w sh=$h
+		if ((lv > 1)); then
+			crop_at "$w" "$h" "$BOXC" "$BOXR" "$lv" "$CX2" "$CY2"
+			mtime=$(stat -f %m "$shown" 2>/dev/null)
+			cache_key "crop|$shown|$mtime|$CROP_X,$CROP_Y,$CROP_W,$CROP_H"
+			if [[ -s "$CACHE/crop-$KEY.png" ]] || sips -c "$CROP_H" "$CROP_W" --cropOffset "$CROP_Y" "$CROP_X" "$shown" --out "$CACHE/crop-$KEY.png" >/dev/null 2>&1; then
+				shown="$CACHE/crop-$KEY.png" sw=$CROP_W sh=$CROP_H
+			else
+				lv=1
+			fi
+		fi
+		fit_cells "$sw" "$sh" "$BOXC" "$BOXR"
+		printf '\e[%d;%dH' $(((BOXR - FIT_R) / 2 + 1)) $(((BOXC - FIT_C) / 2 + 1))
+		printf '\e_Ga=T,f=100,t=f,c=%d,r=%d,C=1,q=2;%s\e\\' "$FIT_C" "$FIT_R" "$(printf '%s' "$shown" | base64 | tr -d '\n')"
+	fi
+	status="$((INDEX + 1))/$COUNT · ${lv}× · $name"
+	hint="   h/l prev/next  i/o zoom  wasd pan  0 fit  z 2×  q quit"
+	status="${status}${hint}"
+	printf '\e[%d;1H\e[2K\e[7m%s\e[0m' "$ROWS" "${status:0:COLS}"
+}
+
+SAVED=$(stty -g </dev/tty)
+cleanup() {
+	printf '\e_Ga=d,d=A,q=2\e\\\e[0m\e[?25h\e[?1049l' >/dev/tty
+	stty "$SAVED" </dev/tty
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
+RESIZED=0
+trap 'RESIZED=1' WINCH
+
+printf '\e[?1049h\e[?25l' >/dev/tty
+stty -echo -icanon min 1 time 0 </dev/tty
+cell_size
+reset_view
+draw
+
+view_key() {
+	[[ -n ${IMG_W[$INDEX]-} ]] || return
+	next_view "${IMG_W[$INDEX]}" "${IMG_H[$INDEX]}" "$BOXC" "$BOXR" "$1"
+	draw
+}
+
+while :; do
+	key=''
+	if IFS= read -rsn1 -t "$TICK" key </dev/tty; then
+		case $key in
+		h | l)
+			n=$INDEX
+			[[ $key == h ]] && ((INDEX > 0)) && INDEX=$((INDEX - 1))
+			[[ $key == l ]] && ((INDEX < COUNT - 1)) && INDEX=$((INDEX + 1))
+			if ((n != INDEX)); then
+				reset_view
+				draw
+			fi
+			;;
+		i) view_key in ;;
+		o) view_key out ;;
+		z) view_key toggle ;;
+		0) view_key fit ;;
+		w) view_key up ;;
+		a) view_key left ;;
+		s) view_key down ;;
+		d) view_key right ;;
+		q) break ;;
+		$'\e')
+			# A lone Escape quits; an arrow or other sequence is read and dropped.
+			rest=''
+			IFS= read -rsn2 -t "$SHORT" rest </dev/tty
+			[[ -z $rest ]] && break
+			;;
+		esac
+	else
+		term_size
+		[[ "${TERM_COLS}x$TERM_ROWS" != "${COLS}x$ROWS" ]] && RESIZED=1
+	fi
+	if ((RESIZED)); then
+		RESIZED=0
+		draw
+	fi
+done
+
+cleanup
+trap - EXIT
+if [[ ${HERDR_ENV-} == 1 && -n ${HERDR_PANE_ID-} ]]; then
+	herdr pane close "$HERDR_PANE_ID" >/dev/null 2>&1
+fi
+exit 0
