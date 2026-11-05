@@ -2,7 +2,7 @@ import type { On, RenderElement } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { describe, expect, test } from 'claude-code/testing'
 
-import { fitCells } from '../hooks/layout'
+import { cropAt, fitCells, nextView } from '../hooks/layout'
 import { herdrZoomOn, register } from '../hooks/register'
 import { resetRegistry } from '../hooks/registry'
 import { resetSourceCache } from '../hooks/source'
@@ -439,7 +439,7 @@ describe('viewer pane', () => {
     const images = findAll(tree, 'Image')
     expect(images).toHaveLength(1)
     expect((images[0]?.props?.['source'] as { file: string }).file).toBe('/b.png')
-    const cells = fitCells({ width: 1600, height: 1000 }, 80 - PANE_PAD_X * 2, 30 - PANE_PAD_Y * 2 - 1 - 1 - 2)
+    const cells = fitCells({ width: 1600, height: 1000 }, 80 - PANE_PAD_X * 2, 30 - PANE_PAD_Y * 2 - 1 - 1 - 1 - 2)
     expect(images[0]?.props?.['columns']).toBe(cells.columns)
     expect(images[0]?.props?.['rows']).toBe(cells.rows)
   })
@@ -475,8 +475,8 @@ describe('viewer pane', () => {
     await three($)
     await zoom($, 2)
     const tree = await pane($)
-    expect(counter(tree)).toContain('2 of 3  b.png')
-    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['‹', '›', '✕'])
+    expect(counter(tree)).toContain('2 of 3 · 1× · b.png')
+    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['‹', '›', '−', '+', '✕', 'fit', '2×', '↑', '←', '↓', '→'])
   })
 
   test('✕ (x) closes the pane', async ($, on) => {
@@ -629,6 +629,122 @@ describe('viewer pane', () => {
     await zoom($, 2)
     const result = await $.command.run({ command: 'loupe', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
     expect(JSON.stringify(result)).toContain('[could not open the viewer]')
+  })
+
+  describe('zoom by cropping', () => {
+    // The image box of PANE: 80 - 2 columns, 30 - title - buttons - hint - 2 gaps rows.
+    const BOX = { columns: 78, rows: 25 }
+    const B = { width: 1600, height: 1000 }
+
+    const button = async ($: Engine, label: string) => {
+      const ui = await $.ui.mount(PANE)
+      const found = (await ui.findAll({ type: 'Button' })).find(b => b.props['label'] === label)
+      expect(found?.key).toBeDefined()
+      await ui.press({ key: found?.key ?? '' })
+      await ui.unmount()
+    }
+
+    const crops = (runs: { argv: string[] }[]) => runs.map(r => r.argv).filter(a => a.join(' ').includes('--cropOffset'))
+
+    const shown = (tree: Node) => findAll(tree, 'Image')[0]?.props as { source: { file: string }; columns: number; rows: number } | undefined
+
+    const at2 = async ($: Engine, on: On) => {
+      const io = intercept(on, files())
+      opened(on)
+      await start($)
+      await three($)
+      await zoom($, 2)
+      return io
+    }
+
+    test('z shows the centre at 2x through a sips crop in the cache dir', async ($, on) => {
+      const io = await at2($, on)
+      await hotkey($, 'z')
+      const tree = await pane($)
+      expect(counter(tree)).toContain('2 of 3 · 2× · b.png')
+      const c = cropAt(B, BOX, 2, 800, 500)
+      const argv = crops(io.runs)[0] ?? []
+      expect(argv.slice(-7)).toEqual(['/tmp/t/claude-loupe', String(c.height), String(c.width), String(c.y), String(c.x), '/b.png', shown(tree)?.source.file])
+      expect(shown(tree)?.source.file).toMatch(/^\/tmp\/t\/claude-loupe\/crop-[0-9a-f]+\.png$/)
+      const cells = fitCells({ width: c.width, height: c.height }, BOX.columns, BOX.rows)
+      expect(shown(tree)?.columns).toBe(cells.columns)
+      expect(shown(tree)?.rows).toBe(cells.rows)
+    })
+
+    test('w a s d pan by half the view and 0 fits again', async ($, on) => {
+      const io = await at2($, on)
+      await hotkey($, 'z')
+      await hotkey($, 'd')
+      await hotkey($, 's')
+      const v = nextView(B, BOX, nextView(B, BOX, { level: 2, cx: 800, cy: 500 }, 'right'), 'down')
+      const c = cropAt(B, BOX, 2, v.cx, v.cy)
+      expect(crops(io.runs).at(-1)?.slice(-7, -1)).toEqual(['/tmp/t/claude-loupe', String(c.height), String(c.width), String(c.y), String(c.x), '/b.png'])
+      await hotkey($, 'a')
+      await hotkey($, 'w')
+      await hotkey($, '0')
+      const tree = await pane($)
+      expect(counter(tree)).toContain('2 of 3 · 1× · b.png')
+      expect(shown(tree)?.source.file).toBe('/b.png')
+    })
+
+    test('+ and − step through the levels', async ($, on) => {
+      await at2($, on)
+      await button($, '+')
+      await button($, '+')
+      expect(counter(await pane($))).toContain('3×')
+      await button($, '−')
+      expect(counter(await pane($))).toContain('2×')
+    })
+
+    test('a crop is made once however often it is drawn', async ($, on) => {
+      const io = await at2($, on)
+      await hotkey($, 'z')
+      await pane($)
+      await pane($)
+      expect(crops(io.runs)).toHaveLength(1)
+    })
+
+    test('moving to another image resets the zoom', async ($, on) => {
+      await at2($, on)
+      await hotkey($, 'z')
+      await hotkey($, 'l')
+      expect(counter(await pane($))).toContain('3 of 3 · 1×')
+      await hotkey($, 'h')
+      const tree = await pane($)
+      expect(counter(tree)).toContain('2 of 3 · 1×')
+      expect(shown(tree)?.source.file).toBe('/b.png')
+    })
+
+    test('an image no bigger than the box does not zoom', async ($, on) => {
+      const io = intercept(on, { ...files(), '/a.png': { b64: pngB64(40, 40) } })
+      opened(on)
+      await start($)
+      await three($)
+      await zoom($, 1)
+      await hotkey($, 'z')
+      expect(counter(await pane($))).toContain('1 of 3 · 1×')
+      expect(crops(io.runs)).toHaveLength(0)
+    })
+
+    test('a failing crop shows a dim line and keeps the keys', async ($, on) => {
+      const io = await at2($, on)
+      io.fail()
+      await hotkey($, 'z')
+      const tree = await pane($)
+      expect(findAll(tree, 'Image')).toHaveLength(0)
+      expect(findAll(tree, 'Text').map(textOf)).toContain('[crop failed: b.png]')
+      expect(findAll(tree, 'Button').map(b => b.props?.['hotkey'])).toEqual(expect.arrayContaining(['h', 'l', 'x', '0', 'z']))
+    })
+
+    test('a narrow pane leaves out − and + but keeps the key hint', async ($, on) => {
+      await at2($, on)
+      const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 30 } })
+      const tree = (await ui.drawn()) as RenderElement as Node
+      await ui.unmount()
+      const labels = findAll(tree, 'Button').map(labelOf)
+      expect(labels).not.toContain('+')
+      expect(labels).toEqual(expect.arrayContaining(['fit', '2×', '↑', '←', '↓', '→']))
+    })
   })
 
   describe('herdr full screen', () => {

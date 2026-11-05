@@ -2,8 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement, RenderInput, RenderViewport } from 'claude-code'
 
 import type { Viewer } from '../types'
-import { fitCells, parseImageRefs, pngSize } from './layout'
-import type { Size } from './layout'
+import { cropAt, fitCells, maxZoom, nextView, parseImageRefs, pngSize } from './layout'
+import type { Crop, Size, View, ViewKey } from './layout'
 import { addItem, items, resetRegistry, settle } from './registry'
 import type { Item } from './registry'
 import { cached, canonicalPath, clearSourceCache, clearedIds, clearing, groupMemo, hash, referenced, remember, resultMemo, toolImages, usedIds, written } from './source'
@@ -23,6 +23,18 @@ const PANE_GAP = 1
 const RUN_TIMEOUT_MS = 5000
 const TITLE_ROWS = 1
 const BUTTON_ROWS = 1
+const HINT_ROWS = 1
+// Narrower than this, the viewer leaves out its − and + buttons.
+const ZOOM_BUTTONS_MIN_COLUMNS = 40
+// The key hint under the buttons: each a plain Button, since a hotkey needs one drawn.
+const HINTS: [hotkey: string, label: string, key: ViewKey][] = [
+  ['0', 'fit', 'fit'],
+  ['z', '2×', 'toggle'],
+  ['w', '↑', 'up'],
+  ['a', '←', 'left'],
+  ['s', '↓', 'down'],
+  ['d', '→', 'right'],
+]
 const ROW_THUMBS = 3
 const ROW_THUMB_COLUMNS = 8
 const ROW_THUMB_ROWS = 2
@@ -72,6 +84,27 @@ async function toPng($: EngineInterface, src: string, generation: number): Promi
   written.add(out)
   if (!ok) return { error: `conversion failed: ${src}` }
   return { path: out, size: await sizeOf($, out), generation }
+}
+
+/** Crops a png to those pixels with sips into the cache dir, once per image and crop. */
+async function cropTo($: EngineInterface, item: Item, c: Crop): Promise<Resolved> {
+  const key = `crop|${item.id}|${item.generation}|${c.x},${c.y},${c.width},${c.height}`
+  return (
+    cached(key) ??
+    remember(
+      key,
+      (async (): Promise<Resolved> => {
+        const dir = await cacheDir($)
+        const out = `${dir}/crop-${hash(key)}.png`
+        written.add(out)
+        const argv = [String(c.height), String(c.width), String(c.y), String(c.x), item.path, out]
+        const ok = await run($, ['/bin/sh', '-c', 'mkdir -p "$1" && /usr/bin/sips -c "$2" "$3" --cropOffset "$4" "$5" "$6" --out "$7" >/dev/null', 'sh', dir, ...argv])
+        written.add(out)
+        if (!ok) return { error: `crop failed: ${basename(item.label)}` }
+        return { path: out, size: { width: c.width, height: c.height }, generation: item.generation }
+      })(),
+    )
+  )
 }
 
 export async function resolveFile($: EngineInterface, path: string): Promise<Resolved> {
@@ -394,42 +427,65 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e, next) => {
     if (e.surface !== 'terminal') return next(e)
     const { Box, Button, Image, Text } = $.ui.resolve(e)
-    const { index } = await read($, viewer).catch(() => ({ index: LATEST }))
+    const { index, zoom } = await read($, viewer).catch((): Viewer => ({ index: LATEST }))
     const list = items()
     if (list.length === 0) return <Text dimColor>no images yet</Text>
     const i = index === LATEST ? list.length - 1 : Math.max(0, Math.min(list.length - 1, index))
     const item = list[i] as Item
     const failure = item.pending ? await convertPending($, item.path, item.id).then(r => ('error' in r ? r.error : null)) : null
     const alive = await $.fs.exists(item.path).catch(() => false)
-    const cells = fitCells(
-      item.size,
-      Math.max(1, e.props.bodyColumns - PANE_PAD_X * 2),
-      Math.max(1, e.props.scroll.bodyRows - PANE_PAD_Y * 2 - TITLE_ROWS - BUTTON_ROWS - PANE_GAP * 2),
-    )
+    const box = {
+      columns: Math.max(1, e.props.bodyColumns - PANE_PAD_X * 2),
+      rows: Math.max(1, e.props.scroll.bodyRows - PANE_PAD_Y * 2 - TITLE_ROWS - BUTTON_ROWS - HINT_ROWS - PANE_GAP * 2),
+    }
+    // A zoom belongs to one image: another one (h, l, a new newest) starts at fit.
+    const size = item.size
+    const view: View | undefined = size ? (zoom?.id === item.id ? zoom : { level: 1, cx: size.width / 2, cy: size.height / 2 }) : undefined
+    const level = size && view ? Math.min(view.level, maxZoom(size, box)) : 1
+    const crop = size && view && level > 1 ? cropAt(size, box, level, view.cx, view.cy) : null
+    const shown: Resolved =
+      failure === null && alive && crop ? await cropTo($, item, crop) : { path: item.path, size: item.size, generation: item.generation }
+    const cells = fitCells('error' in shown ? null : shown.size, box.columns, box.rows)
+    const press = (key: ViewKey) => () => {
+      if (!size || !view) return
+      void update($, viewer, v => ({ ...v, zoom: { id: item.id, ...nextView(size, box, v.zoom?.id === item.id ? v.zoom : view, key) } })).catch(() => undefined)
+    }
     return (
       <Box flexDirection="column" alignItems="center" paddingX={PANE_PAD_X} paddingY={PANE_PAD_Y} rowGap={PANE_GAP}>
         <Text>
           <Text bold>{`${i + 1} of ${list.length}`}</Text>
-          {'  '}
-          <Text dimColor>{basename(item.label)}</Text>
+          <Text dimColor>{` · ${level}× · ${basename(item.label)}`}</Text>
         </Text>
         {failure !== null ? (
           <Text dimColor>{`[${failure}]`}</Text>
-        ) : alive ? (
+        ) : !alive ? (
+          <Text dimColor>[file deleted]</Text>
+        ) : 'error' in shown ? (
+          <Text dimColor>{`[${shown.error}]`}</Text>
+        ) : (
           <Image
-            key="view"
-            source={source(item)}
+            key={`view-${shown.path}`}
+            source={{ file: shown.path, format: 'png', generation: shown.generation }}
             columns={cells.columns}
             rows={cells.rows}
             alt={`[#${item.n} ${basename(item.label)}]`}
           />
-        ) : (
-          <Text dimColor>[file deleted]</Text>
         )}
-        <Box flexDirection="row" columnGap={2}>
-          <Button hotkey="h" onPress={() => void step($, -1)}>‹</Button>
-          <Button hotkey="l" onPress={() => void step($, 1)}>›</Button>
-          <Button hotkey="x" onPress={() => void close($)}>✕</Button>
+        <Box flexDirection="column" alignItems="center">
+          <Box flexDirection="row" columnGap={2}>
+            <Button hotkey="h" onPress={() => void step($, -1)}>‹</Button>
+            <Button hotkey="l" onPress={() => void step($, 1)}>›</Button>
+            {e.props.bodyColumns >= ZOOM_BUTTONS_MIN_COLUMNS && <Button onPress={press('out')}>−</Button>}
+            {e.props.bodyColumns >= ZOOM_BUTTONS_MIN_COLUMNS && <Button onPress={press('in')}>+</Button>}
+            <Button hotkey="x" onPress={() => void close($)}>✕</Button>
+          </Box>
+          <Box flexDirection="row" columnGap={1}>
+            {HINTS.map(([hotkey, label, key]) => (
+              <Button key={`hint-${hotkey}`} plain dimColor hotkey={hotkey} onPress={press(key)}>
+                {label}
+              </Button>
+            ))}
+          </Box>
         </Box>
       </Box>
     )
