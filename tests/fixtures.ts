@@ -31,7 +31,7 @@ export function io(files: Record<string, FakeFile>) {
       },
       exists: async (path: string) => path in files,
       read: async (path: string) => {
-        const f = files[path] ?? (path.startsWith('/tmp/t/claude-gallery/') ? { b64: pngB64(800, 600) } : undefined)
+        const f = files[path] ?? (path.startsWith('/tmp/t/claude-loupe/') ? { b64: pngB64(800, 600) } : undefined)
         if (!f?.b64 || f.tooBig) throw new Error('too big or missing')
         return { base64: f.b64 }
       },
@@ -73,7 +73,7 @@ export function intercept(on: On, files: Record<string, FakeFile>, env: Record<s
   })
   on('fs.exists', async (_$, e) => ({ value: e.path in files }))
   on('fs.read', async (_$, e) => {
-    const f = files[e.path] ?? (e.path.startsWith(`${(env?.['TMPDIR'] ?? '/tmp').replace(/\/+$/, '')}/claude-gallery/`) ? { b64: pngB64(800, 600) } : undefined)
+    const f = files[e.path] ?? (e.path.startsWith(`${(env?.['TMPDIR'] ?? '/tmp').replace(/\/+$/, '')}/claude-loupe/`) ? { b64: pngB64(800, 600) } : undefined)
     if (!f?.b64 || f.tooBig) throw new Error('too big or missing')
     return { value: { base64: f.b64 } }
   })
@@ -84,7 +84,7 @@ export function intercept(on: On, files: Record<string, FakeFile>, env: Record<s
     return { value: { exitCode, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   return {
-    /** 讓 base64 寫檔的 process.run 停住，回傳的函式放行。 */
+    /** Holds the base64 write process.run; the returned function releases it. */
     hold: () => {
       let release = () => {}
       gate = new Promise<void>(r => {

@@ -54,10 +54,10 @@ const call = (id: string, tool: string, input: unknown, output: unknown) => ({
 })
 
 describe('AssistantMessage thumbnails', () => {
-  test('a single referenced png draws large with a ⤢ #1 button', async ($, on) => {
+  test('a single referenced png draws large with a ⤢ view #1 button', async ($, on) => {
     intercept(on, { '/a.png': { b64: pngB64(1600, 1000), mtime: 1 } })
     await start($)
-    const tree = await message($, '看圖 ![a](/a.png)')
+    const tree = await message($, 'see ![a](/a.png)')
     const images = findAll(tree, 'Image')
     expect(images).toHaveLength(1)
     expect(textOf(tree)).toContain(ENGINE_ROW)
@@ -65,7 +65,7 @@ describe('AssistantMessage thumbnails', () => {
     const cells = fitCells({ width: 1600, height: 1000 }, Math.min(80, 100 - 4), 20, 6)
     expect(images[0]?.props?.['columns']).toBe(cells.columns)
     expect(images[0]?.props?.['rows']).toBe(cells.rows)
-    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['⤢ #1'])
+    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['⤢ view #1'])
   })
 
   test('two referenced images keep the thumbnail grid', async ($, on) => {
@@ -74,13 +74,13 @@ describe('AssistantMessage thumbnails', () => {
     const tree = await message($, '![a](/a.png) ![b](/b.png)')
     const images = findAll(tree, 'Image')
     expect(images.map(i => i.props?.['rows'])).toEqual([8, 8])
-    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['⤢ #1', '⤢ #2'])
+    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['⤢ view #1', '⤢ view #2'])
   })
 
   test('thumbnail block is indented 2 columns with a blank row above', async ($, on) => {
     intercept(on, { '/a.png': { b64: pngB64(1600, 1000), mtime: 1 } })
     await start($)
-    const tree = await message($, '看圖 ![a](/a.png)')
+    const tree = await message($, 'see ![a](/a.png)')
     const block = findAll(tree, 'Box').find(b => findAll(b, 'Image').length > 0 && b.props?.['marginTop'] !== undefined)
     expect(block?.props?.['marginTop']).toBe(1)
     expect(block?.props?.['paddingLeft']).toBe(THUMB_INDENT)
@@ -89,7 +89,7 @@ describe('AssistantMessage thumbnails', () => {
   test('a message without images is left to the engine', async ($, on) => {
     intercept(on, {})
     await start($)
-    const tree = await message($, '沒有圖')
+    const tree = await message($, 'no pictures here')
     expect(findAll(tree, 'Image')).toHaveLength(0)
     expect(tree.type).toBe('Text')
     expect(textOf(tree)).toBe(ENGINE_ROW)
@@ -125,7 +125,7 @@ describe('AssistantMessage thumbnails', () => {
     await start($)
     const tree = await message($, '![x](/nope.png)')
     expect(findAll(tree, 'Image')).toHaveLength(0)
-    expect(findAll(tree, 'Text').some(t => textOf(t) === '[找不到圖片: /nope.png]')).toBe(true)
+    expect(findAll(tree, 'Text').some(t => textOf(t) === '[image not found: /nope.png]')).toBe(true)
   })
 
   test('at most 8 images per message', async ($, on) => {
@@ -213,7 +213,7 @@ describe('tool result thumbnails', () => {
     })) as RenderElement as Node
     const images = findAll(tree, 'Image')
     expect(images).toHaveLength(1)
-    expect((images[0]?.props?.['source'] as { file: string }).file).toBe('/tmp/t/claude-gallery/toolu_9-0.png')
+    expect((images[0]?.props?.['source'] as { file: string }).file).toBe('/tmp/t/claude-loupe/toolu_9-0.png')
   })
 
   test('a tool group resolves at most 8 images and draws 3 with +5', async ($, on) => {
@@ -332,7 +332,7 @@ describe('tool result thumbnails', () => {
     })) as RenderElement as Node
     const images = findAll(tree, 'Image')
     expect(images).toHaveLength(1)
-    expect((images[0]?.props?.['source'] as { file: string }).file).toBe('/tmp/t/claude-gallery/toolu_a-0.png')
+    expect((images[0]?.props?.['source'] as { file: string }).file).toBe('/tmp/t/claude-loupe/toolu_a-0.png')
   })
 
   test('an unreadable TMPDIR falls back to /tmp', async ($, on) => {
@@ -349,17 +349,17 @@ describe('tool result thumbnails', () => {
       viewport: { columns: 100, rows: 40 },
       props: { tool_use_id: 'toolu_7', tool: 'Read', output: IMAGE_OUTPUT, isErrored: false },
     })) as RenderElement as Node
-    expect((findAll(tree, 'Image')[0]?.props?.['source'] as { file: string } | undefined)?.file).toBe('/tmp/claude-gallery/toolu_7-0.png')
+    expect((findAll(tree, 'Image')[0]?.props?.['source'] as { file: string } | undefined)?.file).toBe('/tmp/claude-loupe/toolu_7-0.png')
   })
 })
 
 describe('viewer pane', () => {
   const PANE = {
-    plugin: 'gallery',
+    plugin: 'loupe',
     surface: 'terminal' as const,
     component: 'Pane' as const,
-    requestId: 'gallery',
-    props: { title: '圖片檢視', isFocused: true, bodyColumns: 80, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 30 }, view: {} },
+    requestId: 'loupe',
+    props: { title: 'Loupe', isFocused: true, bodyColumns: 80, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 30 }, view: {} },
     viewport: { columns: 100, rows: 40 },
   }
 
@@ -388,14 +388,14 @@ describe('viewer pane', () => {
 
   const zoom = async ($: Engine, n: number) => {
     const ui = await $.ui.mount({
-      plugin: 'gallery',
+      plugin: 'loupe',
       surface: 'terminal',
       component: 'AssistantMessage',
       requestId: `msg-${n}`,
       viewport: { columns: 100, rows: 40 },
       props: { text: `![x](/${'abc'[n - 1]}.png)`, isFirstOfReply: true },
     })
-    const button = (await ui.findAll({ type: 'Button' })).find(b => b.props['label'] === `⤢ #${n}`)
+    const button = (await ui.findAll({ type: 'Button' })).find(b => b.props['label'] === `⤢ view #${n}`)
     expect(button?.key).toBeDefined()
     await ui.press({ key: button?.key ?? '' })
     await ui.unmount()
@@ -418,12 +418,12 @@ describe('viewer pane', () => {
 
   const counter = (tree: Node) => findAll(tree, 'Text').map(textOf).find(t => /\d+ of \d+/.test(t)) ?? ''
 
-  test('an empty gallery says so and draws no Image', async ($, on) => {
+  test('an empty viewer says so and draws no Image', async ($, on) => {
     intercept(on, {})
     await start($)
     const tree = await pane($)
     expect(findAll(tree, 'Image')).toHaveLength(0)
-    expect(findAll(tree, 'Text').map(textOf)).toContain('還沒有圖片')
+    expect(findAll(tree, 'Text').map(textOf)).toContain('no images yet')
   })
 
   test('#2 opens the pane on the second image, sized to the body', async ($, on) => {
@@ -432,7 +432,7 @@ describe('viewer pane', () => {
     await start($)
     await three($)
     await zoom($, 2)
-    expect(ids).toContain('gallery')
+    expect(ids).toContain('loupe')
     const tree = await pane($)
     expect(counter(tree)).toContain('2 of 3')
     const images = findAll(tree, 'Image')
@@ -464,7 +464,7 @@ describe('viewer pane', () => {
     await start($)
     await three($)
     await zoom($, 2)
-    expect(ids.args[0]).toMatchObject({ id: 'gallery', title: '圖片檢視', focus: true, closeOnEscape: true, rows: 40, columns: 100 })
+    expect(ids.args[0]).toMatchObject({ id: 'loupe', title: 'Loupe', focus: true, closeOnEscape: true, rows: 40, columns: 100 })
   })
 
   test('the title names the position and the file', async ($, on) => {
@@ -511,7 +511,7 @@ describe('viewer pane', () => {
     await three($)
     await zoom($, 1)
     await hotkey($, 'x')
-    expect(closed).toEqual(['gallery'])
+    expect(closed).toEqual(['loupe'])
   })
 
   test('a ui.close that throws does not break ✕', async ($, on) => {
@@ -533,7 +533,7 @@ describe('viewer pane', () => {
     await start($)
     const five = Array.from({ length: 5 }, (_, i) => ({ type: 'image', file: { base64: pngB64(640 + i, 480), type: 'image/png' } }))
     const ui = await $.ui.mount({
-      plugin: 'gallery',
+      plugin: 'loupe',
       surface: 'terminal',
       component: 'ToolGroup',
       requestId: 'group-5',
@@ -544,18 +544,18 @@ describe('viewer pane', () => {
     expect(button?.key).toBeDefined()
     await ui.press({ key: button?.key ?? '' })
     await ui.unmount()
-    expect(ids).toContain('gallery')
+    expect(ids).toContain('loupe')
     expect(counter(await pane($))).toContain('1 of 5')
   })
 
-  test('/gallery opens the pane on the newest image', async ($, on) => {
+  test('/loupe opens the pane on the newest image', async ($, on) => {
     intercept(on, files())
     const ids = opened(on)
     on('command.run', async () => ({}))
     await start($)
     await three($)
-    await $.command.run({ command: 'gallery', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
-    expect(ids).toContain('gallery')
+    await $.command.run({ command: 'loupe', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
+    expect(ids).toContain('loupe')
     expect(ids.args[0]).toMatchObject({ rows: 40, columns: 100 })
     expect(counter(await pane($))).toContain('3 of 3')
   })
@@ -568,7 +568,7 @@ describe('viewer pane', () => {
     await start($)
     await $.tool.call({ tool: 'Read', file_path: '/x/s.png', tool_use_id: 'toolu_live' })
     const reply = await message($, '![r](/r.png)', 'msg-r')
-    expect(findAll(reply, 'Button').map(labelOf)).toEqual(['⤢ #2'])
+    expect(findAll(reply, 'Button').map(labelOf)).toEqual(['⤢ view #2'])
     const group = (await $.ui.render({
       surface: 'terminal',
       component: 'ToolGroup',
@@ -577,20 +577,20 @@ describe('viewer pane', () => {
       props: { calls: [call('toolu_live', 'Read', { file_path: '/x/s.png' }, IMAGE_OUTPUT)], isActive: false, isExpanded: false },
     })) as RenderElement as Node
     expect(findAll(group, 'Image').map(i => i.props?.['alt'])).toEqual(['[#1 s.png]'])
-    await $.command.run({ command: 'gallery', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
+    await $.command.run({ command: 'loupe', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
     expect(counter(await pane($))).toContain('2 of 2')
     await message($, '![b](/b.png)', 'msg-b')
     expect(counter(await pane($))).toContain('2 of 2')
   })
 
-  test('/gallery follows images registered after it opened', async ($, on) => {
+  test('/loupe follows images registered after it opened', async ($, on) => {
     intercept(on, files())
     opened(on)
     on('command.run', async () => ({}))
     await start($)
     await message($, '![a](/a.png)', 'msg-1')
     await message($, '![b](/b.png)', 'msg-2')
-    await $.command.run({ command: 'gallery', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
+    await $.command.run({ command: 'loupe', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
     expect(counter(await pane($))).toContain('2 of 2')
     await message($, '![c](/c.png)', 'msg-3')
     expect(counter(await pane($))).toContain('3 of 3')
@@ -606,11 +606,11 @@ describe('viewer pane', () => {
     await start($)
     await message($, '![a](/a.png)', 'msg-1')
     await message($, '![b](/b.png)', 'msg-2')
-    await $.command.run({ command: 'gallery', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
+    await $.command.run({ command: 'loupe', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
     await hotkey($, 'h')
     await $.classic.SessionStart({ source: 'clear' })
     const tree = await message($, '![c](/c.png)', 'msg-3')
-    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['⤢ #1'])
+    expect(findAll(tree, 'Button').map(labelOf)).toEqual(['⤢ view #1'])
     expect(counter(await pane($))).toContain('1 of 1')
   })
 
@@ -620,7 +620,7 @@ describe('viewer pane', () => {
     await start($)
     await message($, '![a](/a.png)', 'msg-1')
     await $.classic.SessionStart({ source: 'compact' })
-    expect(findAll(await message($, '![b](/b.png)', 'msg-2'), 'Button').map(labelOf)).toEqual(['⤢ #2'])
+    expect(findAll(await message($, '![b](/b.png)', 'msg-2'), 'Button').map(labelOf)).toEqual(['⤢ view #2'])
   })
 
   test('a file deleted since it was drawn shows a dim line and keeps h/l', async ($, on) => {
@@ -633,12 +633,12 @@ describe('viewer pane', () => {
     delete map['/b.png']
     const tree = await pane($)
     expect(findAll(tree, 'Image')).toHaveLength(0)
-    expect(findAll(tree, 'Text').map(textOf)).toContain('[檔案已刪除]')
+    expect(findAll(tree, 'Text').map(textOf)).toContain('[file deleted]')
     const hotkeys = findAll(tree, 'Button').map(b => b.props?.['hotkey'])
     expect(hotkeys).toEqual(expect.arrayContaining(['h', 'l', 'x']))
   })
 
-  test('a ui.open that throws neither breaks the zoom button nor /gallery', async ($, on) => {
+  test('a ui.open that throws neither breaks the zoom button nor /loupe', async ($, on) => {
     intercept(on, files())
     on('ui.open', async () => {
       throw new Error('denied')
@@ -647,8 +647,8 @@ describe('viewer pane', () => {
     await start($)
     await three($)
     await zoom($, 2)
-    const result = await $.command.run({ command: 'gallery', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
-    expect(JSON.stringify(result)).toContain('[無法開啟檢視區]')
+    const result = await $.command.run({ command: 'loupe', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
+    expect(JSON.stringify(result)).toContain('[could not open the viewer]')
   })
 })
 

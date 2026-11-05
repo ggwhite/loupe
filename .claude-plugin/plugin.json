@@ -1,7 +1,7 @@
 {
-  "name": "gallery",
-  "version": "0.1.0",
-  "description": "Inline image thumbnails in the transcript and an in-session gallery viewer.",
+  "name": "loupe",
+  "version": "0.2.0",
+  "description": "Inline image thumbnails in the transcript and a full-screen image viewer with zoom and pan.",
   "types": "./types/index.d.ts",
   "author": { "name": "white" }
 }

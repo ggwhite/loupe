@@ -1,14 +1,14 @@
 import type { Size } from './layout'
 
 export type ToolImage = { base64: string; mime: string }
-/** pending：只寫了原始檔，還沒轉成 png（子代理的圖，等檢視區要顯示才轉）。 */
-/** ref：工具圖片的快取名稱，註冊表用它當編號的 id，讓同一張圖不論何時解析都對到同一項。 */
+/** pending: only the raw file is written, not yet converted to png (a subagent's image, converted once the viewer shows it). */
+/** ref: the tool image's cache name; the registry keys its number by it, so one image maps to one entry whenever it resolves. */
 export type Resolved = { path: string; size: Size | null; generation: number; pending?: true; ref?: string } | { error: string }
 
 export const SOURCE_CACHE_MAX = 256
 export const MEMO_MAX = 2048
 
-/** 容量有上限的 Map：get 命中會移到最新，滿了就丟最久沒用的。 */
+/** A capped Map: a get hit moves to newest; when full, the least recently used goes. */
 export class Lru<V> {
   private readonly map = new Map<string, V>()
   constructor(private readonly cap: number) {}
@@ -46,18 +46,18 @@ export class Lru<V> {
 
 const cache = new Lru<Promise<Resolved>>(SOURCE_CACHE_MAX)
 
-/** 已定案的工具結果圖片（空陣列＝沒有圖），key 是 tool_use_id，ToolResult 與 ToolGroup 各一份。 */
+/** Settled tool result images (an empty array means none), keyed by tool_use_id, one map each for ToolResult and ToolGroup. */
 export const resultMemo = new Lru<unknown[]>(MEMO_MAX)
 export const groupMemo = new Lru<unknown[]>(MEMO_MAX)
 
-/** 這個 session 寫進快取目錄的檔案；/gallery clear 與保鮮 touch 只動這些。 */
+/** Files this session wrote into the cache dir; /loupe clear and the keep-fresh touch only act on these. */
 export const written = new Set<string>()
 
-/** 出過圖的 tool_use_id；/gallery clear 把它們轉進 clearedIds，之後重畫就不再寫檔、加項目。 */
+/** tool_use_ids that produced images; /loupe clear moves them into clearedIds, so later redraws neither write files nor add entries. */
 export const usedIds = new Lru<true>(MEMO_MAX)
 export const clearedIds = new Lru<true>(MEMO_MAX)
 
-/** 折疊 //、. 與 ..，並把 macOS 的 /private/{var,tmp,etc} 視為同一條路徑，讓不同寫法比得起來。 */
+/** Collapses //, . and .., and treats macOS /private/{var,tmp,etc} as the same path, so different spellings compare equal. */
 export function canonicalPath(path: string): string {
   const parts: string[] = []
   for (const seg of path.split('/')) {
@@ -69,13 +69,13 @@ export function canonicalPath(path: string): string {
   return `/${parts.join('/')}`
 }
 
-/** AssistantMessage 的 ![](path) 引用過的路徑；/gallery clear 不刪這些。 */
+/** Paths an AssistantMessage referenced with ![](path); /loupe clear never deletes these. */
 export const referenced = new Lru<true>(MEMO_MAX)
 
-/** 每次 /gallery clear 加一；開始寫圖時記下它，寫完發現變了就不能再加項目。 */
+/** Bumped by each /loupe clear; a write notes it at the start and adds no entry if it changed by the end. */
 export const clearing = { generation: 0 }
 
-/** /gallery clear 用：清掉這個 session 的圖片狀態，但保留 clearedIds 與 referenced。 */
+/** For /loupe clear: drops this session's image state but keeps clearedIds and referenced. */
 export function clearSourceCache(): void {
   usedIds.clear()
   cache.clear()

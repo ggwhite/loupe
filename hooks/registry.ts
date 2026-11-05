@@ -20,7 +20,7 @@ export function addItem(r: Source, label: string): Item {
   return item
 }
 
-/** 原始檔轉成 png 後，讓同一個編號改指向 png。 */
+/** Once the raw file is converted to png, points the same number at the png. */
 export function settle(id: string, r: { path: string; size: Size | null; generation: number }): void {
   const item = byId.get(id)
   if (!item?.pending) return

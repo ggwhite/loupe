@@ -9,7 +9,7 @@ import type { Item } from './registry'
 import { cached, canonicalPath, clearSourceCache, clearedIds, clearing, groupMemo, hash, referenced, remember, resultMemo, toolImages, usedIds, written } from './source'
 import type { Resolved, ToolImage } from './source'
 
-export const PANE_ID = 'gallery'
+export const PANE_ID = 'loupe'
 const MAX_PER_MESSAGE = 8
 const THUMB_ROWS = 8
 const THUMB_MIN_COLUMNS = 6
@@ -38,7 +38,7 @@ const HOUR_MS = 60 * 60 * 1000
 const CHUNK = 100
 const WRITE_EXTENSIONS = ['png', 'jpg', 'gif', 'webp', 'heic', 'bmp', 'tiff', 'svg', 'ico', 'img']
 
-export const viewer = atom({ plugin: 'gallery', key: 'viewer' } as const, { index: 0 } as Viewer)
+export const viewer = atom({ plugin: 'loupe', key: 'viewer' } as const, { index: 0 } as Viewer)
 
 type Found = { r: Resolved; label: string }
 type Site = RenderInput<'AssistantMessage' | 'ToolResult' | 'ToolGroup', 'terminal'>
@@ -46,7 +46,7 @@ type Viewport = { columns: number; rows?: number }
 
 async function cacheDir($: EngineInterface): Promise<string> {
   const tmp = (await $.env.get('TMPDIR').catch(() => undefined))?.replace(/\/+$/, '') || '/tmp'
-  return `${tmp}/claude-gallery`
+  return `${tmp}/claude-loupe`
 }
 
 async function run($: EngineInterface, argv: string[], stdin?: string): Promise<boolean> {
@@ -70,19 +70,19 @@ async function toPng($: EngineInterface, src: string, generation: number): Promi
   written.add(out)
   const ok = await run($, ['/bin/sh', '-c', 'mkdir -p "$1" && /usr/bin/sips -s format png "$2" --out "$3" >/dev/null', 'sh', dir, src, out])
   written.add(out)
-  if (!ok) return { error: `轉檔失敗: ${src}` }
+  if (!ok) return { error: `conversion failed: ${src}` }
   return { path: out, size: await sizeOf($, out), generation }
 }
 
 export async function resolveFile($: EngineInterface, path: string): Promise<Resolved> {
   const stat = await $.fs.stat(path, { resolve: true }).catch(() => null)
-  if (stat === null || stat.kind !== 'file') return { error: `找不到圖片: ${path}` }
+  if (stat === null || stat.kind !== 'file') return { error: `image not found: ${path}` }
   const generation = Math.floor(stat.mtimeMs)
   const key = `file|${path}|${generation}|${stat.size}`
   return cached(key) ?? remember(key, toPng($, path, generation), true)
 }
 
-/** 把只寫了原始檔的圖轉成 png；同一個檔只轉一次，轉完該編號改指向 png。 */
+/** Converts an image written only as its raw file to png, once per file; its number then points at the png. */
 export async function convertPending($: EngineInterface, raw: string, id: string): Promise<Resolved> {
   const r = await (cached(`lazy|${raw}`) ?? remember(`lazy|${raw}`, toPng($, raw, 0)))
   if (!('error' in r)) settle(id, r)
@@ -109,7 +109,7 @@ export async function resolveToolImage($: EngineInterface, key: string, image: T
       written.add(raw)
       const ok = await run($, ['/bin/sh', '-c', 'mkdir -p "$1" && /usr/bin/base64 -D > "$2"', 'sh', dir, raw], image.base64)
       written.add(raw)
-      if (!ok) return { error: '圖片寫入失敗' }
+      if (!ok) return { error: 'image write failed' }
       if (size !== null) return { path: raw, size, generation: 0, ref: cacheKey }
       if (lazy) return { path: raw, size: null, generation: 0, pending: true, ref: cacheKey }
       const png = await toPng($, raw, 0)
@@ -128,7 +128,7 @@ export async function openViewer($: EngineInterface, index: number, viewport: Vi
     const columns = viewport?.columns ?? FALLBACK_VIEWPORT.columns
     const rows = Math.max(VIEWER_MIN_ROWS, viewport?.rows ?? FALLBACK_VIEWPORT.rows)
     // Opened before any await, so it counts as answering the press and is placed at any width.
-    const placed = $.ui.open({ id: PANE_ID, title: '圖片檢視', focus: true, closeOnEscape: true, rows, columns }).then(
+    const placed = $.ui.open({ id: PANE_ID, title: 'Loupe', focus: true, closeOnEscape: true, rows, columns }).then(
       () => true,
       () => false,
     )
@@ -146,7 +146,7 @@ async function step($: EngineInterface, delta: -1 | 1): Promise<void> {
   } catch {}
 }
 
-/** 用 Preview 開原檔，真正的像素縮放交給它。 */
+/** Opens the original file in Preview, which does the real pixel zoom. */
 async function preview($: EngineInterface, path: string): Promise<void> {
   await run($, ['/usr/bin/open', '-a', 'Preview', path])
 }
@@ -225,7 +225,7 @@ function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderEl
         <Box flexDirection="column" alignItems="flex-start" marginTop={1} paddingLeft={THUMB_INDENT}>
           <Image key={`img-${single.n}`} source={source(single)} {...cells} alt={`[#${single.n} ${basename(single.label)}]`} />
           <Button key={`zoom-${single.n}`} plain dimColor onPress={() => void openViewer($, single.n - 1, viewport)}>
-            {`⤢ #${single.n}`}
+            {`⤢ view #${single.n}`}
           </Button>
         </Box>
       </Box>
@@ -260,7 +260,7 @@ function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderEl
                 alt={`[#${t.item.n} ${basename(t.item.label)}]`}
               />
               <Button key={`zoom-${t.item.n}`} plain dimColor onPress={() => void openViewer($, t.item.n - 1, viewport)}>
-                {`⤢ #${t.item.n}`}
+                {`⤢ view #${t.item.n}`}
               </Button>
             </Box>
           ))}
@@ -281,7 +281,7 @@ export function pruneArgv(dir: string): string[] {
   return ['/usr/bin/find', dir, '-maxdepth', '1', '-type', 'f', '-mmin', `+${PRUNE_AFTER_MINUTES}`, '(', ...names, ')', '-delete']
 }
 
-/** 對本 session 寫過、且確實在快取目錄內的檔案，分批跑 argv 前綴加檔案清單。 */
+/** Runs the argv prefix over this session's own files inside the cache dir, in chunks. */
 async function onWritten($: EngineInterface, prefix: string[], paths: string[]): Promise<void> {
   const dir = await cacheDir($)
   const own = paths.filter(p => p.startsWith(`${dir}/`))
@@ -316,7 +316,7 @@ export const register: Register = on => {
       refresh = $.clock.every(HOUR_MS, () => void onWritten($, ['/usr/bin/touch', '-c', '--'], [...written]))
     } catch {}
     try {
-      await $.command.register({ name: 'gallery', description: '開啟圖片檢視區，從最新一張開始；clear 清除本次對話的圖片', immediate: true })
+      await $.command.register({ name: 'loupe', description: 'Open the image viewer at the newest image; `clear` drops the images of this session', immediate: true })
     } catch {}
     return next(e)
   })
@@ -329,14 +329,14 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'gallery' }, async ($, e) => {
+  on('command.run', { command: 'loupe' }, async ($, e) => {
     if (e.args.trim() === 'clear') {
       const count = await clearSession($)
-      return { text: count === 0 ? '還沒有圖片' : `已清除 ${count} 張圖片` }
+      return { text: count === 0 ? 'no images yet' : `cleared ${count} ${count === 1 ? 'image' : 'images'}` }
     }
     const count = items().length
-    if (!(await openViewer($, LATEST, { columns: e.presentation.columns }))) return { text: '[無法開啟檢視區]' }
-    return { text: count === 0 ? '還沒有圖片' : `圖片檢視：${count} 張` }
+    if (!(await openViewer($, LATEST, { columns: e.presentation.columns }))) return { text: '[could not open the viewer]' }
+    return { text: count === 0 ? 'no images yet' : `Loupe: ${count} ${count === 1 ? 'image' : 'images'}` }
   })
 
   on('tool.call', async ($, e, next) => {
@@ -360,7 +360,7 @@ export const register: Register = on => {
     const { Box, Button, Image, Text } = $.ui.resolve(e)
     const { index } = await read($, viewer).catch(() => ({ index: LATEST }))
     const list = items()
-    if (list.length === 0) return <Text dimColor>還沒有圖片</Text>
+    if (list.length === 0) return <Text dimColor>no images yet</Text>
     const i = index === LATEST ? list.length - 1 : Math.max(0, Math.min(list.length - 1, index))
     const item = list[i] as Item
     const original = item.path
@@ -389,7 +389,7 @@ export const register: Register = on => {
             alt={`[#${item.n} ${basename(item.label)}]`}
           />
         ) : (
-          <Text dimColor>[檔案已刪除]</Text>
+          <Text dimColor>[file deleted]</Text>
         )}
         <Box flexDirection="row" columnGap={2}>
           <Button hotkey="h" onPress={() => void step($, -1)}>‹</Button>

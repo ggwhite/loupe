@@ -15,7 +15,7 @@ const start = async ($: Engine) => {
 
 const IMAGE = { type: 'image', file: { base64: pngB64(640, 480), type: 'image/png' } }
 
-/** 每次被 toolImages 走訪（讀 type）就加一。 */
+/** Counts each time toolImages visits it (reads type). */
 function counted(value: Record<string, unknown>, hits: { walks: number; images: number }) {
   return new Proxy(value, {
     get(target, key) {
@@ -28,7 +28,7 @@ function counted(value: Record<string, unknown>, hits: { walks: number; images: 
 
 type Hook = (...a: unknown[]) => Promise<unknown>
 
-/** 直接呼叫已註冊的 ui.render hook：引擎會複製 props，Proxy 在引擎裡數不到走訪次數。 */
+/** Calls the registered ui.render hook directly: the engine copies props, so a Proxy inside the engine cannot count visits. */
 function direct() {
   const hooks: Record<string, Hook> = {}
   const on = (event: string, matcher: unknown, hook?: Hook) => {
@@ -190,7 +190,7 @@ describe('cache pruning', () => {
     await new Promise(r => setTimeout(r, 0))
     expect(prunes).toHaveLength(1)
     const argv = prunes[0] as string[]
-    expect(argv.slice(0, 7)).toEqual(['/usr/bin/find', '/tmp/t/claude-gallery', '-maxdepth', '1', '-type', 'f', '-mmin'])
+    expect(argv.slice(0, 7)).toEqual(['/usr/bin/find', '/tmp/t/claude-loupe', '-maxdepth', '1', '-type', 'f', '-mmin'])
     expect(argv[7]).toBe('+1440')
     expect(argv.at(-1)).toBe('-delete')
     expect(argv).toContain('*.png')
@@ -215,11 +215,11 @@ describe('render cost with 516 tool results (33 with images), 5 passes', () => {
 describe('lazy conversion for subagent images', () => {
   const JPEG = { type: 'image', file: { base64: 'AAAA', type: 'image/jpeg' } }
   const PANE = {
-    plugin: 'gallery',
+    plugin: 'loupe',
     surface: 'terminal' as const,
     component: 'Pane' as const,
-    requestId: 'gallery',
-    props: { title: '圖片檢視', isFocused: true, bodyColumns: 80, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 30 }, view: {} },
+    requestId: 'loupe',
+    props: { title: 'Loupe', isFocused: true, bodyColumns: 80, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 30 }, view: {} },
     viewport: { columns: 100, rows: 40 },
   }
   const anyFile = new Proxy({}, { has: () => true, get: () => ({}) }) as Record<string, never>
@@ -235,7 +235,7 @@ describe('lazy conversion for subagent images', () => {
     const tree = await $.ui.render(PANE as never)
     expect(runs).toHaveLength(2)
     expect(sips(runs)).toBe(1)
-    expect(JSON.stringify(tree)).toContain('/tmp/t/claude-gallery/')
+    expect(JSON.stringify(tree)).toContain('/tmp/t/claude-loupe/')
     expect(JSON.stringify(tree)).toContain('.png')
     expect(JSON.stringify(tree)).toContain('"type":"Image"')
     await $.ui.render(PANE as never)
@@ -249,7 +249,7 @@ describe('lazy conversion for subagent images', () => {
     await $.tool.call({ tool: 'Read', file_path: '/x.jpg', tool_use_id: 'toolu_sub2', agentId: 'agent-1' } as never)
     io.fail()
     const tree = JSON.stringify(await $.ui.render(PANE as never))
-    expect(tree).toContain('轉檔失敗')
+    expect(tree).toContain('conversion failed')
     expect(tree).not.toContain('"type":"Image"')
     io.fail(false)
     expect(JSON.stringify(await $.ui.render(PANE as never))).toContain('"type":"Image"')
@@ -297,16 +297,16 @@ describe('registry ids for tool images', () => {
   const PNG = { type: 'image', file: { base64: pngB64(8, 8), type: 'image/png' } }
   const anyFile = new Proxy({}, { has: () => true, get: () => ({}) }) as Record<string, never>
   const PANE = {
-    plugin: 'gallery',
+    plugin: 'loupe',
     surface: 'terminal' as const,
     component: 'Pane' as const,
-    requestId: 'gallery',
-    props: { title: '圖片檢視', isFocused: true, bodyColumns: 80, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 30 }, view: {} },
+    requestId: 'loupe',
+    props: { title: 'Loupe', isFocused: true, bodyColumns: 80, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 30 }, view: {} },
     viewport: { columns: 100, rows: 40 },
   }
   const sub = ($: Engine, id: string) => $.tool.call({ tool: 'Read', file_path: '/x.jpg', tool_use_id: id, agentId: 'a1' } as never)
   const total = async ($: Engine) =>
-    Number(/圖片檢視：(\d+) 張/.exec(JSON.stringify(await $.command.run({ command: 'gallery', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })))?.[1])
+    Number(/Loupe: (\d+) image/.exec(JSON.stringify(await $.command.run({ command: 'loupe', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })))?.[1])
   const sips = (runs: { argv: string[] }[]) => runs.filter(r => r.argv.join(' ').includes('sips')).length
 
   test('an eager resolve after the cache evicted a pending item reuses its number', async ($, on) => {
@@ -354,24 +354,24 @@ describe('registry ids for tool images', () => {
   })
 })
 
-describe('/gallery clear', () => {
+describe('/loupe clear', () => {
   const message = ($: Engine, text: string) =>
     $.ui.render({ surface: 'terminal', component: 'AssistantMessage', requestId: 'msg-1', viewport: { columns: 100, rows: 40 }, props: { text, isFirstOfReply: true } })
   const JPEG = { type: 'image', file: { base64: 'AAAA', type: 'image/jpeg' } }
   const files = new Proxy({ '/u/a.png': { b64: pngB64(10, 10) } } as Record<string, unknown>, {
-    has: (t, k) => k in t || (typeof k === 'string' && k.startsWith('/tmp/t/claude-gallery/')),
+    has: (t, k) => k in t || (typeof k === 'string' && k.startsWith('/tmp/t/claude-loupe/')),
     get: (t, k) => (k in t ? t[k as string] : {}),
   }) as Record<string, never>
   const PANE = {
-    plugin: 'gallery',
+    plugin: 'loupe',
     surface: 'terminal' as const,
     component: 'Pane' as const,
-    requestId: 'gallery',
-    props: { title: '圖片檢視', isFocused: true, bodyColumns: 80, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 30 }, view: {} },
+    requestId: 'loupe',
+    props: { title: 'Loupe', isFocused: true, bodyColumns: 80, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 30 }, view: {} },
     viewport: { columns: 100, rows: 40 },
   }
-  const gallery = ($: Engine, args: string) =>
-    $.command.run({ command: 'gallery', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
+  const loupe = ($: Engine, args: string) =>
+    $.command.run({ command: 'loupe', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
 
   test('empties the list and removes only this session cache files', async ($, on) => {
     const { runs } = intercept(on, files)
@@ -381,20 +381,20 @@ describe('/gallery clear', () => {
     await message($, '![a](/u/a.png)')
     await $.tool.call({ tool: 'Read', file_path: '/m.jpg', tool_use_id: 'toolu_m' } as never)
     await $.tool.call({ tool: 'Read', file_path: '/s.jpg', tool_use_id: 'toolu_s', agentId: 'a1' } as never)
-    const text = JSON.stringify(await gallery($, ' clear '))
-    expect(text).toContain('已清除 3 張圖片')
+    const text = JSON.stringify(await loupe($, ' clear '))
+    expect(text).toContain('cleared 3 images')
     const rm = runs.filter(r => r.argv[0] === '/bin/rm')
     expect(rm).toHaveLength(1)
     const argv = rm[0]?.argv ?? []
     expect(argv.slice(0, 3)).toEqual(['/bin/rm', '-f', '--'])
     const paths = argv.slice(3)
     expect(paths).toHaveLength(3)
-    expect(paths.every(p => p.startsWith('/tmp/t/claude-gallery/'))).toBe(true)
+    expect(paths.every(p => p.startsWith('/tmp/t/claude-loupe/'))).toBe(true)
     expect(paths).not.toContain('/u/a.png')
-    expect(paths).toContain('/tmp/t/claude-gallery/toolu_m-0.jpg')
-    expect(paths).toContain('/tmp/t/claude-gallery/toolu_s-0.jpg')
-    expect(JSON.stringify(await $.ui.render(PANE as never))).toContain('還沒有圖片')
-    expect(JSON.stringify(await gallery($, 'clear'))).toContain('還沒有圖片')
+    expect(paths).toContain('/tmp/t/claude-loupe/toolu_m-0.jpg')
+    expect(paths).toContain('/tmp/t/claude-loupe/toolu_s-0.jpg')
+    expect(JSON.stringify(await $.ui.render(PANE as never))).toContain('no images yet')
+    expect(JSON.stringify(await loupe($, 'clear'))).toContain('no images yet')
     expect(runs.filter(r => r.argv[0] === '/bin/rm')).toHaveLength(1)
   })
 
@@ -406,15 +406,15 @@ describe('/gallery clear', () => {
     await $.tool.call({ tool: 'Read', file_path: '/m.jpg', tool_use_id: 'toolu_old' } as never)
     await result($, 'toolu_res', JPEG)
     await group($, 'g', [call('toolu_grp', [JPEG])])
-    await gallery($, 'clear')
+    await loupe($, 'clear')
     const before = runs.length
     for (const tree of [await result($, 'toolu_old', JPEG), await result($, 'toolu_res', JPEG), await group($, 'g', [call('toolu_grp', [JPEG])])]) {
       expect(JSON.stringify(tree)).toBe(JSON.stringify(await result($, 'toolu_none', 'plain')))
     }
     expect(runs.length).toBe(before)
-    expect(JSON.stringify(await gallery($, ''))).toContain('還沒有圖片')
+    expect(JSON.stringify(await loupe($, ''))).toContain('no images yet')
     await $.tool.call({ tool: 'Read', file_path: '/n.jpg', tool_use_id: 'toolu_new' } as never)
-    expect(JSON.stringify(await gallery($, ''))).toContain('圖片檢視：1 張')
+    expect(JSON.stringify(await loupe($, ''))).toContain('Loupe: 1 image')
     expect(JSON.stringify(await result($, 'toolu_new', JPEG))).toContain('"type":"Image"')
   })
 
@@ -426,8 +426,8 @@ describe('/gallery clear', () => {
       return next(e)
     })
     await start($)
-    await gallery($, 'clear')
-    await gallery($, 'clear')
+    await loupe($, 'clear')
+    await loupe($, 'clear')
     const epochs = values.map(v => (v as { epoch?: number }).epoch)
     expect(epochs).toEqual([1, 2])
   })
@@ -438,15 +438,15 @@ describe('/gallery clear', () => {
     on('tool.call', async () => ({ result: JPEG as never }))
     await start($)
     await $.tool.call({ tool: 'Read', file_path: '/a.jpg', tool_use_id: 'toolu_A' } as never)
-    await gallery($, 'clear')
+    await loupe($, 'clear')
     await $.tool.call({ tool: 'Read', file_path: '/b.jpg', tool_use_id: 'toolu_B' } as never)
-    await gallery($, 'clear')
+    await loupe($, 'clear')
     const before = runs.length
     const plain = JSON.stringify(await result($, 'toolu_none', 'plain'))
     expect(JSON.stringify(await result($, 'toolu_A', JPEG))).toBe(plain)
     expect(JSON.stringify(await result($, 'toolu_B', JPEG))).toBe(plain)
     expect(runs.length).toBe(before)
-    expect(JSON.stringify(await gallery($, ''))).toContain('還沒有圖片')
+    expect(JSON.stringify(await loupe($, ''))).toContain('no images yet')
   })
 
   test('a write in flight during clear adds no item and its file stays tracked', async ($, on) => {
@@ -457,17 +457,17 @@ describe('/gallery clear', () => {
     const release = hold()
     const pending = $.tool.call({ tool: 'Read', file_path: '/r.jpg', tool_use_id: 'toolu_race' } as never)
     await clock.settle()
-    expect(JSON.stringify(await gallery($, 'clear'))).toContain('還沒有圖片')
+    expect(JSON.stringify(await loupe($, 'clear'))).toContain('no images yet')
     release()
     await pending
     await clock.settle()
-    expect(JSON.stringify(await gallery($, ''))).toContain('還沒有圖片')
+    expect(JSON.stringify(await loupe($, ''))).toContain('no images yet')
     const before = runs.filter(r => r.argv[0] === '/usr/bin/touch').length
     await clock.advance(61 * 60 * 1000)
     const touch = runs.filter(r => r.argv[0] === '/usr/bin/touch')
     expect(touch.length).toBeGreaterThan(before)
     expect(touch.at(-1)?.argv.some(p => p.endsWith('/toolu_race-0.jpg'))).toBe(true)
-    await gallery($, 'clear')
+    await loupe($, 'clear')
     expect(runs.filter(r => r.argv[0] === '/bin/rm').at(-1)?.argv.some(p => p.endsWith('/toolu_race-0.jpg'))).toBe(true)
   })
 
@@ -477,10 +477,10 @@ describe('/gallery clear', () => {
     on('tool.call', async () => ({ result: JPEG as never }))
     await start($)
     await $.tool.call({ tool: 'Read', file_path: '/m.jpg', tool_use_id: 'toolu_k' } as never)
-    await message($, '![k](/tmp/t/claude-gallery/toolu_k-0.jpg)')
-    await gallery($, 'clear')
+    await message($, '![k](/tmp/t/claude-loupe/toolu_k-0.jpg)')
+    await loupe($, 'clear')
     const paths = (runs.find(r => r.argv[0] === '/bin/rm')?.argv ?? []).slice(3)
-    expect(paths).not.toContain('/tmp/t/claude-gallery/toolu_k-0.jpg')
+    expect(paths).not.toContain('/tmp/t/claude-loupe/toolu_k-0.jpg')
     expect(paths.length).toBeGreaterThan(0)
   })
 
@@ -490,10 +490,10 @@ describe('/gallery clear', () => {
     on('tool.call', async () => ({ result: JPEG as never }))
     await start($)
     await $.tool.call({ tool: 'Read', file_path: '/m.jpg', tool_use_id: 'toolu_k' } as never)
-    await message($, '![k](/private/tmp//t/./claude-gallery/toolu_k-0.jpg)')
-    await gallery($, 'clear')
-    await gallery($, 'clear')
-    const kept = '/tmp/t/claude-gallery/toolu_k-0.jpg'
+    await message($, '![k](/private/tmp//t/./claude-loupe/toolu_k-0.jpg)')
+    await loupe($, 'clear')
+    await loupe($, 'clear')
+    const kept = '/tmp/t/claude-loupe/toolu_k-0.jpg'
     expect(runs.filter(r => r.argv[0] === '/bin/rm').every(r => !r.argv.includes(kept))).toBe(true)
     await clock.advance(61 * 60 * 1000)
     const touch = runs.filter(r => r.argv[0] === '/usr/bin/touch').at(-1)
@@ -505,12 +505,12 @@ describe('/gallery clear', () => {
     on('tool.call', async () => ({ result: { type: 'image', file: { base64: pngB64(4, 4), type: 'image/png' } } as never }))
     await start($)
     for (let i = 0; i < 250; i++) await $.tool.call({ tool: 'Read', file_path: '/p.png', tool_use_id: `toolu_c${i}` } as never)
-    await gallery($, 'clear')
+    await loupe($, 'clear')
     const rm = runs.filter(r => r.argv[0] === '/bin/rm')
     expect(rm.map(r => r.argv.length - 3)).toEqual([100, 100, 50])
   })
 
-  test('plain /gallery still opens the viewer and removes nothing', async ($, on) => {
+  test('plain /loupe still opens the viewer and removes nothing', async ($, on) => {
     const { runs } = intercept(on, files)
     const opened: string[] = []
     on('ui.open', async (_$, e) => {
@@ -520,8 +520,8 @@ describe('/gallery clear', () => {
     on('tool.call', async () => ({ result: JPEG as never }))
     await start($)
     await $.tool.call({ tool: 'Read', file_path: '/m.jpg', tool_use_id: 'toolu_m' } as never)
-    expect(JSON.stringify(await gallery($, ''))).toContain('圖片檢視：1 張')
-    expect(opened).toEqual(['gallery'])
+    expect(JSON.stringify(await loupe($, ''))).toContain('Loupe: 1 image')
+    expect(opened).toEqual(['loupe'])
     expect(runs.some(r => r.argv[0] === '/bin/rm')).toBe(false)
   })
 })
@@ -543,7 +543,7 @@ describe('cache file refresh', () => {
     const argv = touches()[0]?.argv ?? []
     expect(argv.slice(0, 3)).toEqual(['/usr/bin/touch', '-c', '--'])
     expect(argv.slice(3).sort()).toHaveLength(2)
-    expect(argv.slice(3).every(p => p.startsWith('/tmp/t/claude-gallery/'))).toBe(true)
+    expect(argv.slice(3).every(p => p.startsWith('/tmp/t/claude-loupe/'))).toBe(true)
   })
 
   test('nothing is touched when the session wrote no files', async ($, on) => {
@@ -562,8 +562,8 @@ describe('written extensions', () => {
     await resolveToolImage($, 'b', { base64: 'AAAA', mime: 'image/x-weird;v=1' })
     await resolveToolImage($, 'c', { base64: 'AAAA', mime: 'image/JPEG' })
     const raws = runs.filter(r => r.stdin !== undefined).map(r => r.argv.at(-1) as string)
-    expect(raws).toEqual(['/tmp/t/claude-gallery/a.svg', '/tmp/t/claude-gallery/b.img', '/tmp/t/claude-gallery/c.jpg'])
-    const prune = pruneArgv('/tmp/t/claude-gallery')
+    expect(raws).toEqual(['/tmp/t/claude-loupe/a.svg', '/tmp/t/claude-loupe/b.img', '/tmp/t/claude-loupe/c.jpg'])
+    const prune = pruneArgv('/tmp/t/claude-loupe')
     for (const raw of raws) expect(prune).toContain(`*.${raw.split('.').pop()}`)
     expect(prune).toContain('-iname')
     expect(prune).not.toContain('-name')
