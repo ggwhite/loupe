@@ -122,6 +122,34 @@ function basename(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1)
 }
 
+/** The herdr pane this mod zoomed, to zoom back off on close; undefined while it zoomed none. */
+let herdrZoomed: string | undefined
+
+/** Inside herdr, zooms the session's pane to fill the window, unless it is zoomed already. */
+export async function herdrZoomOn($: EngineInterface): Promise<void> {
+  if (herdrZoomed !== undefined) return
+  const inside = await $.env.get('HERDR_ENV').catch(() => undefined)
+  const pane = await $.env.get('HERDR_PANE_ID').catch(() => undefined)
+  if (inside !== '1' || !pane) return
+  const r = await $.process.run(['herdr', 'pane', 'layout', '--pane', pane], { timeoutMs: RUN_TIMEOUT_MS }).catch(() => null)
+  if (r === null || r.exitCode !== 0) return
+  let zoomed: unknown
+  try {
+    zoomed = (JSON.parse(r.stdout) as { result?: { layout?: { zoomed?: unknown } } }).result?.layout?.zoomed
+  } catch {
+    return
+  }
+  if (zoomed !== false) return
+  if (await run($, ['herdr', 'pane', 'zoom', '--pane', pane, '--on'])) herdrZoomed = pane
+}
+
+async function herdrZoomOff($: EngineInterface): Promise<void> {
+  const pane = herdrZoomed
+  if (pane === undefined) return
+  herdrZoomed = undefined
+  await run($, ['herdr', 'pane', 'zoom', '--pane', pane, '--off'])
+}
+
 export async function openViewer($: EngineInterface, index: number, viewport: Viewport | undefined): Promise<boolean> {
   try {
     // The whole terminal: the engine trims both to what its layout can spare.
@@ -133,7 +161,9 @@ export async function openViewer($: EngineInterface, index: number, viewport: Vi
       () => false,
     )
     await update($, viewer, () => ({ index }))
-    return await placed
+    const isPlaced = await placed
+    if (isPlaced) await herdrZoomOn($)
+    return isPlaced
   } catch {
     return false
   }
@@ -149,7 +179,11 @@ async function step($: EngineInterface, delta: -1 | 1): Promise<void> {
 async function close($: EngineInterface): Promise<void> {
   try {
     await $.ui.close({ id: PANE_ID })
-  } catch {}
+  } catch {
+    return
+  }
+  // A plugin's own $.ui.close runs only the hooks beneath it, not its own ui.close hook.
+  await herdrZoomOff($)
 }
 
 function collect(found: Found[]): { added: Item[]; errors: string[] } {
@@ -347,6 +381,13 @@ export const register: Register = on => {
       const found = await Promise.all(images.map(async (img, i) => ({ r: await resolveToolImage($, `${e.tool_use_id}-${i}`, img, lazy), label })))
       if (generation === clearing.generation) collect(found)
     } catch {}
+    return r
+  })
+
+  // Escape (closeOnEscape) and any close not made by this mod's own x button.
+  on('ui.close', { id: PANE_ID }, async ($, e, next) => {
+    const r = await next(e)
+    await herdrZoomOff($)
     return r
   })
 

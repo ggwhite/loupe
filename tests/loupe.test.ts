@@ -3,6 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import { describe, expect, test } from 'claude-code/testing'
 
 import { fitCells } from '../hooks/layout'
+import { herdrZoomOn, register } from '../hooks/register'
 import { resetRegistry } from '../hooks/registry'
 import { resetSourceCache } from '../hooks/source'
 import { ENGINE_ROW, intercept, pngB64 } from './fixtures'
@@ -628,6 +629,106 @@ describe('viewer pane', () => {
     await zoom($, 2)
     const result = await $.command.run({ command: 'loupe', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } })
     expect(JSON.stringify(result)).toContain('[could not open the viewer]')
+  })
+
+  describe('herdr full screen', () => {
+    const HERDR = { HOME: '/Users/u', TMPDIR: '/tmp/t/', HERDR_ENV: '1', HERDR_PANE_ID: 'w1:p2' }
+    const LAYOUT = ['herdr', 'pane', 'layout', '--pane', 'w1:p2']
+    const ON = ['herdr', 'pane', 'zoom', '--pane', 'w1:p2', '--on']
+    const OFF = ['herdr', 'pane', 'zoom', '--pane', 'w1:p2', '--off']
+    const layout = (zoomed: boolean) => JSON.stringify({ id: 'cli:pane:layout', result: { layout: { zoomed }, type: 'pane_layout' } })
+
+    const herdr = (on: On, zoomed: boolean, env: Record<string, string> = HERDR) => {
+      const io = intercept(on, files(), env)
+      io.respond(argv => (argv.join(' ') === LAYOUT.join(' ') ? layout(zoomed) : undefined))
+      on('ui.close', async () => ({ value: undefined }))
+      return { io, calls: () => io.runs.map(r => r.argv).filter(a => a[0] === 'herdr') }
+    }
+
+    test('opening the viewer zooms the herdr pane on after checking it', async ($, on) => {
+      const { calls } = herdr(on, false)
+      opened(on)
+      await start($)
+      await three($)
+      await zoom($, 2)
+      expect(calls()).toEqual([LAYOUT, ON])
+    })
+
+    test('x zooms the pane back off', async ($, on) => {
+      const { calls } = herdr(on, false)
+      opened(on)
+      await start($)
+      await three($)
+      await zoom($, 2)
+      await hotkey($, 'x')
+      expect(calls()).toEqual([LAYOUT, ON, OFF])
+    })
+
+    test('Escape (a close by the person) zooms the pane back off', async () => {
+      // The test engine raises no ui.close of its own, and a test's import is not the engine's
+      // copy of the module: zoom on through the import, then hand its hook the person's close.
+      const hooks: Record<string, (...a: unknown[]) => Promise<unknown>> = {}
+      register(((event: string, matcher: unknown, hook?: (...a: unknown[]) => Promise<unknown>) => {
+        if (event === 'ui.close') hooks[JSON.stringify(matcher)] = hook ?? (matcher as never)
+      }) as never, {} as never)
+      const ran: string[][] = []
+      const env: Record<string, string> = HERDR
+      const fake = {
+        env: { get: async (name: string) => env[name] },
+        process: {
+          run: async (argv: string[]) => {
+            ran.push(argv)
+            return { exitCode: 0, stdout: argv.join(' ') === LAYOUT.join(' ') ? layout(false) : '', stderr: '' }
+          },
+        },
+      }
+      await herdrZoomOn(fake as never)
+      await hooks[JSON.stringify({ id: 'loupe' })]?.(fake, { id: 'loupe', origin: { kind: 'person' } }, async () => undefined)
+      expect(ran).toEqual([LAYOUT, ON, OFF])
+    })
+
+    test('a pane that was already zoomed is left alone', async ($, on) => {
+      const { calls } = herdr(on, true)
+      opened(on)
+      await start($)
+      await three($)
+      await zoom($, 2)
+      await hotkey($, 'x')
+      expect(calls()).toEqual([LAYOUT])
+    })
+
+    test('opening again while open zooms once and closes once', async ($, on) => {
+      const { calls } = herdr(on, false)
+      opened(on)
+      await start($)
+      await three($)
+      await zoom($, 1)
+      await zoom($, 2)
+      await hotkey($, 'x')
+      expect(calls()).toEqual([LAYOUT, ON, OFF])
+    })
+
+    test('outside herdr nothing runs', async ($, on) => {
+      const { calls } = herdr(on, false, { HOME: '/Users/u', TMPDIR: '/tmp/t/' })
+      opened(on)
+      await start($)
+      await three($)
+      await zoom($, 2)
+      await hotkey($, 'x')
+      expect(calls()).toEqual([])
+    })
+
+    test('a failing herdr query neither zooms nor breaks the viewer', async ($, on) => {
+      const { io, calls } = herdr(on, false)
+      const ids = opened(on)
+      await start($)
+      await three($)
+      io.fail()
+      await zoom($, 2)
+      await hotkey($, 'x')
+      expect(calls()).toEqual([LAYOUT])
+      expect(ids).toContain('loupe')
+    })
   })
 })
 
