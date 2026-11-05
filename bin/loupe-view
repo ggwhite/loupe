@@ -6,6 +6,8 @@
 #   loupe-view --self-test             check the fit and crop math against hooks/layout.ts
 #
 # Keys: h/l prev/next, i/o zoom in/out, z 2x at the centre, 0 fit, w/a/s/d pan, q or Esc quit.
+# Mouse: the wheel zooms about the pointer, a left drag pans, a double-click toggles 2x there,
+# a click on the left or right tenth steps through the images, and the status bar has buttons.
 # A zoom is a crop made with sips into $TMPDIR/claude-loupe/view/, the same crop the
 # in-Claude viewer makes (hooks/layout.ts): the box's shape at level times the fit scale.
 
@@ -219,6 +221,7 @@ drag_view() {
 
 # The status bar starts with these buttons, each drawn as [label] and a space: name:label width in columns.
 BTN_LIST="prev:1 next:1 out:1 in:1 fit:3 quit:1"
+BTN_BAR="[‹] [›] [−] [+] [fit] [✕]"
 
 # button_at col -> BTN: the button under column col of the status bar, or empty.
 button_at() {
@@ -536,15 +539,17 @@ draw() {
 		printf '\e[%d;%dH' $(((BOXR - FIT_R) / 2 + 1)) $(((BOXC - FIT_C) / 2 + 1))
 		printf '\e_Ga=T,f=100,t=f,c=%d,r=%d,C=1,q=2;%s\e\\' "$FIT_C" "$FIT_R" "$(printf '%s' "$shown" | base64 | tr -d '\n')"
 	fi
-	status="$((INDEX + 1))/$COUNT · ${lv}× · $name"
+	status="$BTN_BAR  $((INDEX + 1))/$COUNT · ${lv}× · $name"
 	hint="   h/l prev/next  i/o zoom  wasd pan  0 fit  z 2×  q quit"
+	((${#status} + ${#hint} > COLS)) && hint="   h/l i/o wasd 0 z q"
+	((${#status} + ${#hint} > COLS)) && hint=''
 	status="${status}${hint}"
 	printf '\e[%d;1H\e[2K\e[7m%s\e[0m' "$ROWS" "${status:0:COLS}"
 }
 
 SAVED=$(stty -g </dev/tty)
 cleanup() {
-	printf '\e_Ga=d,d=A,q=2\e\\\e[0m\e[?25h\e[?1049l' >/dev/tty
+	printf '\e[?1006l\e[?1002l\e[?1000l\e_Ga=d,d=A,q=2\e\\\e[0m\e[?25h\e[?1049l' >/dev/tty
 	stty "$SAVED" </dev/tty
 }
 trap cleanup EXIT
@@ -552,7 +557,8 @@ trap 'exit 130' INT TERM HUP
 RESIZED=0
 trap 'RESIZED=1' WINCH
 
-printf '\e[?1049h\e[?25l' >/dev/tty
+# SGR mouse reports: presses, releases, motion while a button is down, and the wheel.
+printf '\e[?1049h\e[?25l\e[?1000h\e[?1002h\e[?1006h' >/dev/tty
 stty -echo -icanon min 1 time 0 </dev/tty
 cell_size
 reset_view
@@ -564,35 +570,149 @@ view_key() {
 	draw
 }
 
+# on_key key: what a key does, and the button or click that stands for it; q sets QUIT.
+on_key() {
+	local n=$INDEX
+	case $1 in
+	h | l)
+		[[ $1 == h ]] && ((INDEX > 0)) && INDEX=$((INDEX - 1))
+		[[ $1 == l ]] && ((INDEX < COUNT - 1)) && INDEX=$((INDEX + 1))
+		if ((n != INDEX)); then
+			reset_view
+			draw
+		fi
+		;;
+	i) view_key in ;;
+	o) view_key out ;;
+	z) view_key toggle ;;
+	0) view_key fit ;;
+	w) view_key up ;;
+	a) view_key left ;;
+	s) view_key down ;;
+	d) view_key right ;;
+	q) QUIT=1 ;;
+	esac
+}
+
+# NOW = the time in milliseconds: $EPOCHREALTIME in bash 5, perl under /bin/bash 3.2.
+now_ms() {
+	if [[ -n ${EPOCHREALTIME-} ]]; then
+		NOW=${EPOCHREALTIME//[!0-9]/}
+		NOW=$((10#$NOW / 1000))
+		return
+	fi
+	NOW=$(perl -MTime::HiRes=time -e 'printf "%d", time * 1000' 2>/dev/null)
+	[[ $NOW =~ ^[0-9]+$ ]] || NOW=$((SECONDS * 1000))
+}
+
+# mouse_view zoom key col row | drag dcols drows: changes the view and draws it if it moved.
+mouse_view() {
+	local was="$LEVEL $CX2 $CY2"
+	[[ -n ${IMG_W[$INDEX]-} ]] || return
+	if [[ $1 == zoom ]]; then
+		zoom_at "${IMG_W[$INDEX]}" "${IMG_H[$INDEX]}" "$BOXC" "$BOXR" "$2" "$3" "$4"
+	else
+		drag_view "${IMG_W[$INDEX]}" "${IMG_H[$INDEX]}" "$BOXC" "$BOXR" "$2" "$3"
+	fi
+	[[ "$LEVEL $CX2 $CY2" != "$was" ]] && draw
+	:
+}
+
+# A left press on the image starts a drag (DRAG) from cell DRAG_C,DRAG_R; DRAGGED once it moves.
+# LAST_T LAST_C LAST_R remember the last press, for a double click.
+DRAG=0 DRAGGED=0 DRAG_C=0 DRAG_R=0 LAST_T=0 LAST_C=0 LAST_R=0
+
+# on_mouse button col row up: one SGR report (up is 1 for a release).
+on_mouse() {
+	local b=$1 col=$2 row=$3 up=$4 dc dr
+	if ((b & 64)); then
+		# The wheel: up (64) zooms in, down (65) out, about the pointer.
+		((row <= BOXR)) || return
+		if ((b & 1)); then mouse_view zoom out "$col" "$row"; else mouse_view zoom in "$col" "$row"; fi
+		return
+	fi
+	if ((b & 32)); then
+		# A move with the button down. A crop takes about 100ms, so the view follows every 2 cells.
+		((DRAG)) || return
+		dc=$((col - DRAG_C)) dr=$((row - DRAG_R))
+		((dc != 0 || dr != 0)) && DRAGGED=1
+		if ((dc * dc >= 4 || dr * dr >= 4)); then
+			DRAG_C=$col DRAG_R=$row
+			mouse_view drag "$dc" "$dr"
+		fi
+		return
+	fi
+	# The middle and right buttons are left alone.
+	((b & 3)) && return
+	if ((up)); then
+		((DRAG)) || return
+		DRAG=0
+		dc=$((col - DRAG_C)) dr=$((row - DRAG_R))
+		if ((dc != 0 || dr != 0)); then
+			mouse_view drag "$dc" "$dr"
+		fi
+		if ((DRAGGED || dc != 0 || dr != 0)); then
+			LAST_T=0
+			return
+		fi
+		# A click on the left or right tenth of the screen steps through the images.
+		edge_at "$col" "$BOXC"
+		[[ $EDGE == prev ]] && on_key h
+		[[ $EDGE == next ]] && on_key l
+		return
+	fi
+	if ((row > BOXR)); then
+		LAST_T=0
+		button_at "$col"
+		case $BTN in
+		prev) on_key h ;;
+		next) on_key l ;;
+		out) on_key o ;;
+		in) on_key i ;;
+		fit) on_key 0 ;;
+		quit) on_key q ;;
+		esac
+		return
+	fi
+	now_ms
+	edge_at "$col" "$BOXC"
+	if [[ -z $EDGE ]] && double_click "$LAST_T" "$LAST_C" "$LAST_R" "$NOW" "$col" "$row"; then
+		LAST_T=0
+		mouse_view zoom toggle "$col" "$row"
+		return
+	fi
+	LAST_T=$NOW LAST_C=$col LAST_R=$row
+	DRAG=1 DRAGGED=0 DRAG_C=$col DRAG_R=$row
+}
+
+# read_mouse: the rest of an SGR report, after its ESC [ <: button;col;row then M (press) or m (release).
+read_mouse() {
+	local seq='' ch='' re='^([0-9]+);([0-9]+);([0-9]+)$'
+	while IFS= read -rsn1 -t "$SHORT" ch </dev/tty; do
+		[[ $ch == M || $ch == m ]] && break
+		seq=$seq$ch
+		((${#seq} > 20)) && return
+	done
+	[[ $seq =~ $re ]] || return
+	on_mouse "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$([[ $ch == m ]] && echo 1 || echo 0)"
+}
+
+QUIT=0
 while :; do
 	key=''
 	if IFS= read -rsn1 -t "$TICK" key </dev/tty; then
 		case $key in
-		h | l)
-			n=$INDEX
-			[[ $key == h ]] && ((INDEX > 0)) && INDEX=$((INDEX - 1))
-			[[ $key == l ]] && ((INDEX < COUNT - 1)) && INDEX=$((INDEX + 1))
-			if ((n != INDEX)); then
-				reset_view
-				draw
-			fi
-			;;
-		i) view_key in ;;
-		o) view_key out ;;
-		z) view_key toggle ;;
-		0) view_key fit ;;
-		w) view_key up ;;
-		a) view_key left ;;
-		s) view_key down ;;
-		d) view_key right ;;
-		q) break ;;
 		$'\e')
-			# A lone Escape quits; an arrow or other sequence is read and dropped.
+			# A lone Escape quits; a mouse report is handled; an arrow or other sequence is read and dropped.
 			rest=''
-			IFS= read -rsn2 -t "$SHORT" rest </dev/tty
+			IFS= read -rsn1 -t "$SHORT" rest </dev/tty
 			[[ -z $rest ]] && break
+			IFS= read -rsn1 -t "$SHORT" rest </dev/tty
+			[[ $rest == '<' ]] && read_mouse
 			;;
+		*) on_key "$key" ;;
 		esac
+		((QUIT)) && break
 	else
 		term_size
 		[[ "${TERM_COLS}x$TERM_ROWS" != "${COLS}x$ROWS" ]] && RESIZED=1
