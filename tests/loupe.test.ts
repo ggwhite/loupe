@@ -783,7 +783,7 @@ describe('viewer pane', () => {
       const failing = { now: opts.failing }
       io.respond(argv => (argv[0] === 'herdr' && argv[2] === 'split' ? (opts.reply ?? split) : undefined))
       io.failWhen(argv => failing.now !== undefined && argv[0] === 'herdr' && argv[2] === failing.now)
-      return { io, heal: () => (failing.now = undefined), calls: () => io.runs.map(r => r.argv).filter(a => a[0] === 'herdr') }
+      return { io, calls: () => io.runs.map(r => r.argv).filter(a => a[0] === 'herdr') }
     }
 
     /** The command line handed to `herdr pane run w1:p9`, with the mod's root taken out. */
@@ -796,17 +796,46 @@ describe('viewer pane', () => {
       return m?.[2] ?? ''
     }
 
-    test('⤢ view #2 splits, zooms the new pane and runs loupe-view on every image at 2', async ($, on) => {
+    /** Records every ui.close, to check the in-Claude pane stays open behind the full-screen viewer. */
+    const closes = (on: On) => {
+      const ids: string[] = []
+      on('ui.close', async (_$, e) => {
+        ids.push(e.id)
+        return { value: undefined }
+      })
+      return ids
+    }
+
+    /** The in-Claude pane at #2 of three, with herdr's calls so far forgotten, then f pressed in it. */
+    const full = async ($: Engine, calls: () => string[][]) => {
+      await start($)
+      await three($)
+      await zoom($, 2)
+      const before = calls().length
+      await hotkey($, 'f')
+      return calls().slice(before)
+    }
+
+    test('inside herdr ⤢ view #2 runs nothing and opens the in-Claude pane at 2', async ($, on) => {
       const { calls } = herdr(on)
       const ids = opened(on)
       await start($)
       await three($)
       await zoom($, 2)
-      const all = calls()
+      expect(calls()).toEqual([])
+      expect(ids).toContain('loupe')
+      expect(counter(await pane($))).toContain('2 of 3')
+    })
+
+    test('f in the pane splits, zooms the new pane and runs loupe-view on every image at 2', async ($, on) => {
+      const { calls } = herdr(on)
+      opened(on)
+      const closed = closes(on)
+      const all = await full($, calls)
       expect(all.slice(0, 2)).toEqual([SPLIT, ZOOM])
       expect(all).toHaveLength(3)
       expect(ran(all)).toBe(`2 '/a.png' '/b.png' '/c.png'`)
-      expect(ids).not.toContain('loupe')
+      expect(closed).toEqual([])
     })
 
     test('paths with spaces and quotes reach loupe-view as one word each', async ($, on) => {
@@ -824,6 +853,8 @@ describe('viewer pane', () => {
       const button = (await ui.findAll({ type: 'Button' })).find(b => b.props['label'] === '⤢ view #1')
       await ui.press({ key: button?.key ?? '' })
       await ui.unmount()
+      expect(calls()).toEqual([])
+      await hotkey($, 'f')
       expect(ran(calls())).toBe(`1 '/it'\\''s here/x y.png'`)
     })
 
@@ -849,51 +880,43 @@ describe('viewer pane', () => {
       expect(counter(await pane($))).toContain('2 of 3')
     })
 
-    test('a failing split falls back to the in-Claude pane', async ($, on) => {
+    test('a failing split leaves only the in-Claude pane', async ($, on) => {
       const { calls } = herdr(on, { failing: 'split' })
-      const ids = opened(on)
-      await start($)
-      await three($)
-      await zoom($, 2)
-      expect(calls()).toEqual([SPLIT])
-      expect(ids).toContain('loupe')
+      opened(on)
+      const closed = closes(on)
+      expect(await full($, calls)).toEqual([SPLIT])
+      expect(closed).toEqual([])
       expect(counter(await pane($))).toContain('2 of 3')
     })
 
-    test('a split answer without a pane id falls back', async ($, on) => {
+    test('a split answer without a pane id leaves nothing behind', async ($, on) => {
       const { calls } = herdr(on, { reply: 'not json' })
-      const ids = opened(on)
-      await start($)
-      await three($)
-      await zoom($, 2)
-      expect(calls()).toEqual([SPLIT])
-      expect(ids).toContain('loupe')
+      opened(on)
+      const closed = closes(on)
+      expect(await full($, calls)).toEqual([SPLIT])
+      expect(closed).toEqual([])
     })
 
-    test('a failing zoom closes the pane it split and falls back', async ($, on) => {
+    test('a failing zoom closes the pane it split and keeps the in-Claude pane', async ($, on) => {
       const { calls } = herdr(on, { failing: 'zoom' })
-      const ids = opened(on)
-      await start($)
-      await three($)
-      await zoom($, 2)
-      expect(calls()).toEqual([SPLIT, ZOOM, CLOSE])
-      expect(ids).toContain('loupe')
+      opened(on)
+      const closed = closes(on)
+      expect(await full($, calls)).toEqual([SPLIT, ZOOM, CLOSE])
+      expect(closed).toEqual([])
     })
 
-    test('a failing run closes the pane it split and falls back', async ($, on) => {
+    test('a failing run closes the pane it split and keeps the in-Claude pane', async ($, on) => {
       const { calls } = herdr(on, { failing: 'run' })
-      const ids = opened(on)
-      await start($)
-      await three($)
-      await zoom($, 2)
-      const all = calls()
+      opened(on)
+      const closed = closes(on)
+      const all = await full($, calls)
       expect(all.at(-1)).toEqual(CLOSE)
       expect(all).toHaveLength(4)
-      expect(ids).toContain('loupe')
+      expect(closed).toEqual([])
     })
 
     test('the in-Claude pane has f (⛶ full) opening the full-screen viewer at its image', async ($, on) => {
-      const { calls, heal } = herdr(on, { failing: 'split' })
+      const { calls } = herdr(on)
       opened(on)
       await start($)
       await three($)
@@ -902,7 +925,6 @@ describe('viewer pane', () => {
       expect(findAll(tree, 'Button').find(b => b.props?.['hotkey'] === 'f')?.props?.['label']).toBe('⛶ full')
       await hotkey($, 'l')
       const before = calls().length
-      heal()
       await hotkey($, 'f')
       const after = calls().slice(before)
       expect(after[0]).toEqual(SPLIT)

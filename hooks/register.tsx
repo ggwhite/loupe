@@ -179,7 +179,7 @@ export function shellQuote(word: string): string {
 /**
  * Inside herdr, splits a pane off the session's, zooms it over the whole window and runs
  * bin/loupe-view in it on every image, at `index`. False, with no pane left behind, when
- * outside herdr or any step fails, for the caller to fall back to the in-Claude pane.
+ * outside herdr or any step fails; /loupe then falls back to the in-Claude pane.
  */
 export async function openFullscreen($: EngineInterface, index: number): Promise<boolean> {
   const at = herdrAt
@@ -208,13 +208,6 @@ export async function openFullscreen($: EngineInterface, index: number): Promise
   } catch {
     return false
   }
-}
-
-/** The full-screen viewer inside herdr, else (or when it fails) the in-Claude pane. */
-function openAny($: EngineInterface, index: number, viewport: Viewport | undefined): void {
-  // Outside herdr the pane opens before any await, so it counts as answering the press.
-  if (herdrAt === undefined) void openViewer($, index, viewport)
-  else void openFullscreen($, index).then(ok => ok || openViewer($, index, viewport))
 }
 
 export async function openViewer($: EngineInterface, index: number, viewport: Viewport | undefined): Promise<boolean> {
@@ -282,7 +275,7 @@ function drawRow($: EngineInterface, e: Site, found: Found[], row: RenderElement
           <Box flexDirection="column" height={ROW_THUMB_ROWS} justifyContent="flex-end">
             <Box flexDirection="row" columnGap={ROW_GAP}>
               {added.length > ROW_THUMBS && <Text dimColor>{`+${added.length - ROW_THUMBS}`}</Text>}
-              <Button key={`open-${first.n}`} plain dimColor onPress={() => openAny($, first.n - 1, viewport)}>
+              <Button key={`open-${first.n}`} plain dimColor onPress={() => void openViewer($, first.n - 1, viewport)}>
                 {'⤢ '}
               </Button>
             </Box>
@@ -314,7 +307,7 @@ function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderEl
         {below}
         <Box flexDirection="column" alignItems="flex-start" marginTop={1} paddingLeft={THUMB_INDENT}>
           <Image key={`img-${single.n}`} source={source(single)} {...cells} alt={`[#${single.n} ${basename(single.label)}]`} />
-          <Button key={`zoom-${single.n}`} plain dimColor onPress={() => openAny($, single.n - 1, viewport)}>
+          <Button key={`zoom-${single.n}`} plain dimColor onPress={() => void openViewer($, single.n - 1, viewport)}>
             {`⤢ view #${single.n}`}
           </Button>
         </Box>
@@ -349,7 +342,7 @@ function drawThumbs($: EngineInterface, e: Site, found: Found[], below: RenderEl
                 rows={t.rows}
                 alt={`[#${t.item.n} ${basename(t.item.label)}]`}
               />
-              <Button key={`zoom-${t.item.n}`} plain dimColor onPress={() => openAny($, t.item.n - 1, viewport)}>
+              <Button key={`zoom-${t.item.n}`} plain dimColor onPress={() => void openViewer($, t.item.n - 1, viewport)}>
                 {`⤢ view #${t.item.n}`}
               </Button>
             </Box>

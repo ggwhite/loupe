@@ -34,7 +34,7 @@ Screenshots, mockups and charts pass through a Claude Code session all the time,
 | | Feature | What it does |
 | :-: | --- | --- |
 | 🖼️ | **Thumbnails** | Images Claude reads with `Read`, puts in a reply as `![](/path/shot.png)`, or gets back from MCP tools show up as pictures under the row that produced them. |
-| ⤢ | **Full-screen viewer** | Inside [herdr](https://herdr.dev), a herdr pane zoomed over the whole window. Elsewhere, a Claude Code pane. |
+| ⤢ | **Preview, then full screen** | A thumbnail's `⤢` opens a Claude Code pane on the right as a preview. Inside [herdr](https://herdr.dev), `f` there opens a herdr pane zoomed over the whole window. |
 | 🔍 | **Real-pixel zoom** | 1×, 2×, 3×, 4×, 6×, 8×. Each level draws a crop of the original at full size. |
 | 🖱️ | **Mouse** | Wheel zooms about the pointer, drag pans, double-click toggles 2×, status bar buttons (full-screen viewer). |
 | ↔️ | **Whole session** | Step through every image of the session with `h` / `l`. |
@@ -44,7 +44,7 @@ Screenshots, mockups and charts pass through a Claude Code session all the time,
 
 1. [Install](#install) and start a new Claude Code session.
 2. Ask Claude to look at a screenshot: a thumbnail appears.
-3. Press `⤢ view #n` under it (or run `/loupe`), then zoom with `i` or the wheel. `q` closes.
+3. Press `⤢ view #n` under it: a preview pane opens on the right. Inside herdr, press `f` (`⛶ full`) there, or run `/loupe`, for the full-screen viewer; zoom with `i` or the wheel. `q` closes it; a preview pane you opened is still there.
 
 ## Requirements
 
@@ -90,14 +90,14 @@ The right and middle buttons do nothing. herdr passes mouse events to the pane w
 
 `bin/loupe-view 1 a.png b.png` also runs on its own in any terminal that reads kitty images from a file path.
 
-## In-Claude pane fallback
+## In-Claude preview pane
 
-Outside herdr, or if any herdr step fails, the viewer opens in a Claude Code pane and takes the focus. Same keys, with these differences:
+A thumbnail's `⤢` always opens the viewer in a Claude Code pane on the right, which takes the focus; `/loupe` opens it too outside herdr. Same keys as the full-screen viewer, with these differences:
 
 | Key | Action |
 | --- | --- |
 | `x` or `Esc` | Close the viewer |
-| `f` | `⛶ full`: try the full-screen viewer again at this image (inside herdr only) |
+| `f` | `⛶ full`: open the full-screen viewer at this image (inside herdr only); the pane stays open behind it |
 | `+` / `−` buttons | Zoom one level, like `i` / `o` |
 
 The title line shows where you are, e.g. `2 of 5 · 2× · settings-page.png`. There is no mouse zoom or drag here.
@@ -106,10 +106,10 @@ The title line shows where you are, e.g. `2 of 5 · 2× · settings-page.png`. T
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.svg">
-  <img src="assets/architecture-light.svg" alt="A thumbnail's view button or /loupe opens the viewer. Inside herdr loupe splits a pane, zooms it and runs bin/loupe-view (kitty graphics, sips crops); outside herdr or on failure it opens the in-Claude pane" width="100%">
+  <img src="assets/architecture-light.svg" alt="A thumbnail's view button opens the in-Claude preview pane. Inside herdr, /loupe or f in that pane splits a pane, zooms it and runs bin/loupe-view (kitty graphics, sips crops); outside herdr /loupe opens the in-Claude pane" width="100%">
 </picture>
 
-- **herdr.** With `HERDR_ENV=1` and `HERDR_PANE_ID` set at session start, loupe runs `herdr pane split --pane $HERDR_PANE_ID --direction right --focus --cwd $HOME`, then `herdr pane zoom --pane <new> --on`, then `herdr pane run <new> "'<mod>/bin/loupe-view' <n> '<png>' ..."` with every image of the session. If the zoom or run fails, it closes the pane it split and falls back.
+- **herdr.** With `HERDR_ENV=1` and `HERDR_PANE_ID` set at session start, `/loupe` and `f` in the preview pane run `herdr pane split --pane $HERDR_PANE_ID --direction right --focus --cwd $HOME`, then `herdr pane zoom --pane <new> --on`, then `herdr pane run <new> "'<mod>/bin/loupe-view' <n> '<png>' ..."` with every image of the session. If the zoom or run fails, loupe closes the pane it split; `/loupe` then falls back to the in-Claude pane, and after `f` the preview pane is still there.
 - **loupe-view.** Alternate screen, hidden cursor, kitty graphics by file path (`a=T,f=100,t=f`), since herdr does not draw directly transmitted images. It asks for the cell size (`CSI 16 t`, 1:2 if no answer), redraws on resize, and restores the terminal on every way out, mouse reporting (`?1000`, `?1002`, `?1006`) included.
 - **Zoom by cropping.** From the image size and the cell box, loupe works out the visible pixels and cuts them out with `sips -c <h> <w> --cropOffset <y> <x>`. Each crop is made once and reused.
 - **PNG everywhere.** JPEG, GIF, WebP, HEIC, ... are converted once with `sips -s format png` and reused while the source is unchanged. Images subagents read are converted only when the viewer shows them.
