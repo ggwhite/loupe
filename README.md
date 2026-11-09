@@ -5,6 +5,8 @@
   <img src="assets/banner-light.svg" alt="loupe: see every image in your Claude Code session, full screen and zoomable, in your terminal" width="100%">
 </picture>
 
+**Thumbnails in the transcript, and a full-screen viewer with real-pixel zoom and pan — without leaving the terminal.**
+
 <p>
   <a href="#install"><img src="https://img.shields.io/badge/Claude%20Code-mod-d97757?style=flat-square" alt="Claude Code mod"></a>
   <a href="https://herdr.dev"><img src="https://img.shields.io/badge/herdr-full%20screen-F2B84B?style=flat-square" alt="Full screen in herdr"></a>
@@ -12,15 +14,75 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT"></a>
 </p>
 
-**Thumbnails in the transcript, and a full-screen viewer with real-pixel zoom and pan — without leaving the terminal.**
-
-[Features](#features) · [Install](#install) · [Keys & mouse](#keys--mouse) · [How it works](#how-it-works) · [Development](#development)
+[Features](#features) · [Quick start](#quick-start) · [Install](#install) · [Keys & mouse](#keys--mouse) · [How it works](#how-it-works) · [Development](#development)
 
 </div>
 
-<br>
+---
+
+<div align="center">
+  <a href="docs/gifs/tour.mp4">
+    <img src="docs/gifs/tour.webp" alt="loupe in 18 seconds: Claude reads a colour specimen sheet and a dusk landscape, and both show up as thumbnails under the Read row; /loupe opens the newest one full screen in a zoomed herdr pane; h steps back to the specimen sheet; i, i zoom it to 3× until the swatch labels are sharp; d pans right; q closes the viewer and the Claude session is back" width="900" />
+  </a>
+  <br/>
+  <sub>▶ <a href="docs/gifs/tour.mp4">Watch the tour as a video</a></sub>
+</div>
+
+## Why loupe
 
 Screenshots, mockups and charts pass through a Claude Code session all the time, but the transcript only shows `[Image #1]`. loupe draws them where they appear, and opens any of them large enough to read the small print.
+
+## Features
+
+<table>
+<tr>
+<td width="42%" valign="middle">
+
+### Thumbnails, then full screen
+
+Images Claude reads with `Read`, puts in a reply as `![](/path/shot.png)`, or gets back from MCP tools show up as **thumbnails** under the row that produced them. Inside [herdr](https://herdr.dev), **`/loupe`** opens them in a herdr pane **zoomed over the whole window**; `q` closes it and you are back in the session.
+
+</td>
+<td><img src="docs/gifs/open.webp" alt="A Claude Code session with two thumbnails under the Read row; /loupe opens the newest image full screen, h steps to the other one, q closes the viewer and the session is back" /></td>
+</tr>
+<tr>
+<td width="42%" valign="middle">
+
+### Real-pixel zoom
+
+**1×, 2×, 3×, 4×, 6×, 8×.** Each level is a **`sips` crop of the original** drawn at full size, not an upscaled thumbnail, so 8-pixel labels become readable. `i` / `o` step, `0` fits the whole image; the **wheel** zooms about the pointer.
+
+</td>
+<td><img src="docs/gifs/zoom.webp" alt="The colour specimen sheet at fit; i zooms to 2×, 3× and 4× until the swatch names and hex codes are sharp; 0 fits the whole sheet again" /></td>
+</tr>
+<tr>
+<td width="42%" valign="middle">
+
+### Pan around
+
+**`w` `a` `s` `d`** move half of what is visible, and a **left drag** pans with the mouse. The view stops at the image's edges.
+
+</td>
+<td><img src="docs/gifs/pan.webp" alt="The specimen sheet at 3×; d, s, a, a, w, d walk the view right, down, left, up and back to where it started" /></td>
+</tr>
+<tr>
+<td width="42%" valign="middle">
+
+### The whole session
+
+**`h` / `l`** step through **every image of the session**; the zoom resets on each one. **`z`** toggles 2× at the centre, a **double-click** at the point you clicked. The status bar shows where you are, e.g. `2/2 · 1× · dusk.png`, and its **buttons** do the same with the mouse.
+
+</td>
+<td><img src="docs/gifs/browse.webp" alt="The specimen sheet; i zooms to 2×; l steps to the dusk landscape at fit; z toggles 2× and back; h returns to the specimen sheet at fit" /></td>
+</tr>
+</table>
+
+Converted files and crops live in `$TMPDIR/claude-loupe`; files older than a day are **pruned at session start**.
+
+<details>
+<summary>Still screenshots: fit and 3×</summary>
+
+<br>
 
 ![loupe-view in a zoomed herdr pane: a colour specimen sheet fitted to the window, with the status bar of buttons and key hints](docs/screenshots/fit.png)
 
@@ -29,16 +91,7 @@ Screenshots, mockups and charts pass through a Claude Code session all the time,
   <br><sub>Fit, then <code>i</code> <code>i</code>: 3×, drawn from a <code>sips</code> crop of the original, not an upscaled thumbnail.</sub>
 </p>
 
-## Features
-
-| | Feature | What it does |
-| :-: | --- | --- |
-| 🖼️ | **Thumbnails** | Images Claude reads with `Read`, puts in a reply as `![](/path/shot.png)`, or gets back from MCP tools show up as pictures under the row that produced them. |
-| ⤢ | **Preview, then full screen** | A thumbnail's `⤢` opens a Claude Code pane on the right as a preview. Inside [herdr](https://herdr.dev), `f` there opens a herdr pane zoomed over the whole window. |
-| 🔍 | **Real-pixel zoom** | 1×, 2×, 3×, 4×, 6×, 8×. Each level draws a crop of the original at full size. |
-| 🖱️ | **Mouse** | Wheel zooms about the pointer, drag pans, double-click toggles 2×, status bar buttons (full-screen viewer). |
-| ↔️ | **Whole session** | Step through every image of the session with `h` / `l`. |
-| 🧹 | **Self-cleaning cache** | Converted files and crops live in `$TMPDIR/claude-loupe`; files older than a day are pruned at session start. |
+</details>
 
 ## Quick start
 
@@ -90,7 +143,10 @@ The right and middle buttons do nothing. herdr passes mouse events to the pane w
 
 `bin/loupe-view 1 a.png b.png` also runs on its own in any terminal that reads kitty images from a file path.
 
-## In-Claude preview pane
+<details>
+<summary><b>In-Claude preview pane</b>: the <code>⤢ view</code> button and <code>/loupe</code> outside herdr</summary>
+
+<br>
 
 A thumbnail's `⤢` always opens the viewer in a Claude Code pane on the right, which takes the focus; `/loupe` opens it too outside herdr. Same keys as the full-screen viewer, with these differences:
 
@@ -101,6 +157,8 @@ A thumbnail's `⤢` always opens the viewer in a Claude Code pane on the right, 
 | `+` / `−` buttons | Zoom one level, like `i` / `o` |
 
 The title line shows where you are, e.g. `2 of 5 · 2× · settings-page.png`. There is no mouse zoom or drag here.
+
+</details>
 
 ## How it works
 
@@ -115,13 +173,18 @@ The title line shows where you are, e.g. `2 of 5 · 2× · settings-page.png`. T
 - **PNG everywhere.** JPEG, GIF, WebP, HEIC, ... are converted once with `sips -s format png` and reused while the source is unchanged. Images subagents read are converted only when the viewer shows them.
 - **Cache.** `$TMPDIR/claude-loupe` (or `/tmp/claude-loupe`); files older than a day are pruned at session start, and a running session's files are kept fresh every hour.
 
-## Limits
+<details>
+<summary><b>Limits</b></summary>
+
+<br>
 
 - **Pane width.** A docked Claude Code pane is capped at 45% of the terminal's columns. The herdr viewer avoids the cap; elsewhere it applies.
 - **Full-screen viewer** needs herdr and a terminal that reads kitty images from a file path (`t=f`), so not a remote session whose files are elsewhere. It shows the images loupe had when it opened.
 - **No `=` / `-` keys** in the Claude Code pane: hotkeys are single letters or digits. Under 40 columns the buttons are left out and `i: in` / `o: out` join the key line.
 - **Very large files** beyond Claude Code's file read cap show at fit only.
 - **Zoom depth** stops at one image pixel per terminal cell, so small images may not zoom at all.
+
+</details>
 
 ## Development
 
@@ -133,6 +196,8 @@ bin/loupe-view --self-test            # check loupe-view's fit and crop math aga
 ```
 
 The engine writes its type definitions into `.claude-plugin/types/` the first time it loads the mod. The banner and diagram are hand-written SVGs in `assets/`.
+
+The clips in `docs/gifs/` are recorded from a real terminal window with `docs/gifs/record.sh` (screenshots of a herdr session driven with `herdr pane send-keys`, encoded with `img2webp`); see the comment at its top to re-record them.
 
 ## License
 
